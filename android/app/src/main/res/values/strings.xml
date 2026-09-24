@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Aurelion</string>
+    <string name="title_activity_main">Aurelion</string>
+    <string name="package_name">com.aurelion.sim</string>
+    <string name="custom_url_scheme">com.aurelion.sim</string>
+</resources>

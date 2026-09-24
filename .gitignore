@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts
+
+# local data
+.saves/
+*.log
+
+# env
+.env
+.env.local
+.env*.local
+
+# capacitor build output
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.cxx/
+
+# os
+.DS_Store
+tsconfig.tsbuildinfo
