@@ -18,6 +18,12 @@ npm run dev        # http://localhost:3000
 No database required. With `DATABASE_URL` set (Postgres), saves sync to the database; without it, saves live in a local `.saves/`
 directory — the app is fully functional either way.
 
+**Where server saves go.** The store picks the first directory it can actually write to: `SAVE_DIR` → `<project>/.saves` →
+`$TMPDIR/aurelion-saves` → in-process memory. Read-only serverless filesystems (Vercel's `/var/task`, Lambda) therefore degrade instead of
+throwing: the API answers, and `GET /api/health` reports `{"ok":true,"persist":false,...}` so the client knows the mirror is ephemeral and
+keeps localStorage authoritative. Set `DATABASE_URL` (or a writable `SAVE_DIR`) for real multi-device sync. Under `next dev` saves are kept
+outside the project tree so the bundler's watcher is not churned on every action.
+
 ```bash
 npm run build      # production web build
 npm run start      # serve it
@@ -33,6 +39,9 @@ npm run start      # serve it
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run sim-test` | End-to-end simulation smoke test (deterministic seeds, 10-year soak) |
+| `npm run money-test` | Money audit: every known way a balance used to be destroyed, asserted fixed |
+| `npm run ui-test` | Renders every panel and the new game surfaces to markup (no blank screens) |
+| `npm test` | typecheck + lint + all three suites |
 | `npm run apk` | Static web build (`out/`) + Capacitor sync for Android |
 
 ---
@@ -61,6 +70,20 @@ merely mirrors saves for multi-device sync.
   dynasties with heirs**
 - Personality traits that measurably affect outcomes
 
+### The money rules (invariants, all asserted by `npm run money-test`)
+- **A payment you cannot cover moves nothing.** An unaffordable bet, tuition, instalment or retainer is refused — the old behaviour drained
+  the wallet *and every bank account* and then reported failure, which is how balances "vanished" on their own.
+- **Shortfalls become arrears, not confiscation.** Unpaid living costs carry forward, cost you stress/health/credit, and clear the moment
+  money arrives.
+- **Nothing is charged twice.** Advisors debit the liquid pool once per month (they used to hit the wallet *and* the bank account, and to
+  empty the account outright when the wallet was short).
+- **No NaN can reach a balance.** Every money entry point is guarded, and a loaded save is repaired (`repairFinances`) so a poisoned save
+  heals instead of zeroing out.
+- **Newer save wins.** When a device and the server disagree, the copy with the later timestamp is kept — a stale local copy can no longer
+  roll a life (and its wallet) backwards.
+- **Loans amortise for real.** Each instalment pays accrued interest first, then principal; late interest capitalises with a fee, and a
+  prepayment re-amortises the schedule.
+
 ### Capital
 - Banking (accounts, interest, fees), loans & credit scores, mortgages
 - Stocks, bonds, funds across all ten countries
@@ -77,7 +100,12 @@ merely mirrors saves for multi-device sync.
 - International travel, visas, residency, second citizenship, foreign assets
 
 ### The underground (fictional, system-level only)
-- Gambling with **transparent odds and house edge shown** (roulette, dice, cards, slots, lottery, 5×5 Mines)
+- Gambling with **transparent odds and house edge shown** (roulette, dice, cards, slots, lottery)
+- **Mines is now actually played**: a real 5×5 board, tiles opened one at a time, multiplier and next-tile odds shown before every click,
+  cash out whenever you want. The board is generated from a seed when the round starts, so it is fixed before your first click; the payout
+  is the fair multiplier for surviving that many picks less a visible 3% house edge (measured RTP ≈ 97% over 600 blind rounds)
+- **Casinos and media outlets run real P&Ls** — revenue follows the economy and your reach, costs follow inflation, and both can lose money
+  (a casino used to cost ₹80 L and then never simulate again; an outlet was a free ₹40k/month faucet)
 - Criminal path: heat, evidence, convictions, organizations — a consequence system, not a how-to
 
 ### New: the insight layer
@@ -90,7 +118,13 @@ merely mirrors saves for multi-device sync.
 - **Analysis ("What should I do?")** — your situation, options with cost / risk / upside / opportunity cost, balance sheet,
   concentration & liquidity risk dashboard. It never picks for you
 - **WHY? buttons** — explain the current net worth, any stock's move, and market drivers from actual state
+- **Cash Flow panel** — every month broken into named flows (salary, rent, tax, living costs, instalments with interest vs principal split,
+  advisors, newsroom costs, casino floor, fees), a 12-month history, fixed burn, **runway in months**, arrears and short-month count
 - **Transaction ledger** + monthly flow breakdowns — every big move is posted and traceable
+- **Two new studies** — a *personal cash-flow audit* and a *debt & credit review*, both reporting your actual numbers (leaks, runway,
+  refinance savings) rather than generic advice
+- **Time is yours to control** — pause by default, ¼× (a month every 16s), ½×, 1×, 2×, 5×, jump-a-year, plus manual `+1mo` / `+1y` steps;
+  the chosen speed survives a reload
 - **Economic calendar** — elections, grant deadlines, loan instalments, bond maturities, construction, auctions, forecasts
 - **Year-end review** — annual accounts: what you built, what the world did, where the markets went
 - **Lifetime statistics** — earned/spent/taxes, businesses, elections, peak net worth, gambling record
@@ -99,6 +133,9 @@ merely mirrors saves for multi-device sync.
 - **Simulation speed controls** — pause / 1× / 2× / 5× / 1-year, with hard pauses on major decisions
 - **Save export/import** — full save files; bring a life to another phone
 - **Hidden dev tools** — tap the AURELION logo 5× to open; gated behind a dev-mode switch (recursions, shocks, elections, grants…)
+- **The treasury (owner-only)** — an unmarked spot: click the *Net worth* caption (or the sidebar save stamp) three times. It asks for
+  the admin key — `NEXT_PUBLIC_ADMIN_KEY` at build time, default `aurelion-admin` — and dev mode also unlocks it. A draw credits the wallet
+  and is written to the ledger, the timeline and lifetime stats as an admin draw, so owner money is always traceable inside the save
 
 ---
 
@@ -116,13 +153,17 @@ src/lib/sim/          # the simulation — pure TypeScript, no UI, no server
   feed.ts             # news/notes/timeline/history/achievements
   ratings.ts          # credit-rating model
   advanced.ts         # goals, forecasts, research, advisors, auctions, challenges,
-                      # year reviews, stats, ledger, calendar, analysis, biographies
-  debug.ts            # hidden developer tools (gated)
+                      # year reviews, stats, ledger, calendar, analysis, biographies,
+                      # cash-flow report
+  mines.ts            # the Mines round: seeded board, fair multipliers, odds
+  debug.ts            # hidden developer tools + the owner treasury (gated)
 src/lib/store.ts      # client-first persistence: localStorage + optional server mirror
+                      # (newer-copy-wins, save repair, sync status)
 src/lib/persist.ts    # server persistence: Postgres (drizzle) or file store fallback
-src/components/game/  # the UI (panels, overlays, app shell)
+src/lib/filestore.ts  # write-aware file store: SAVE_DIR → .saves → tmp → memory
+src/components/game/  # the UI (panels, overlays, Mines board, app shell)
+scripts/              # static export build + the three test suites
 android/              # Capacitor Android project
-scripts/              # static export build + simulation smoke test
 ```
 
 **Client-first design:** `applyAction` is a pure function over `GameState`. The UI runs it locally, writes the result to

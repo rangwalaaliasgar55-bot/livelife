@@ -212,6 +212,8 @@ export interface Finances {
   monthlyExpenses: number;
   livingCost: number;
   taxPaidYtd: number;
+  /** Unpaid living costs carried forward. Never silently confiscated. */
+  arrears: number;
   netWorthHistory: { t: string; v: number }[];
   incomeHistory: { t: string; v: number }[];
 }
@@ -933,6 +935,11 @@ export type PlayerAction =
   | { type: "foundOrg"; kind: OrgState["kind"]; name: string; doctrine: string }
   | { type: "orgAct"; orgId: string; act: "recruit" | "media" | "facility" | "donate" }
   | { type: "gamble"; game: "roulette" | "dice" | "cards" | "slots" | "lottery" | "mines"; stake: number; extra?: Record<string, unknown> }
+  | { type: "minesStart"; stake: number; mines: number }
+  | { type: "minesReveal"; tile: number }
+  | { type: "minesCashout" }
+  | { type: "minesClear" }
+  | { type: "admin"; op: "unlock" | "lock" | "draw" | "status"; key?: string; amount?: number }
   | { type: "foundCasino"; name: string; cityId: string }
   | { type: "foundBank"; name: string }
   | { type: "foundInsurer"; name: string }

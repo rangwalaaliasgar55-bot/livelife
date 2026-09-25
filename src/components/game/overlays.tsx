@@ -5,28 +5,65 @@ import { devOpsList } from "@/lib/sim/debug";
 import type { GameState, PlayerAction } from "@/lib/sim/types";
 import { Btn, Field, Input, Label, Modal } from "./ui";
 
-export type Speed = 0 | 1 | 2 | 5 | 10;
+export type Speed = 0 | 0.25 | 0.5 | 1 | 2 | 5 | 12;
 
-export function SpeedControls({ speed, setSpeed }: { speed: Speed; setSpeed: (s: Speed) => void }) {
-  const opts: { s: Speed; label: string; title: string }[] = [
-    { s: 0, label: "⏸", title: "Paused (manual time)" },
-    { s: 1, label: "1×", title: "1 month / 4s" },
-    { s: 2, label: "2×", title: "1 month / 2s" },
-    { s: 5, label: "5×", title: "1 month / 0.9s" },
-    { s: 10, label: "1y", title: "1 year / 9s" },
-  ];
+/** Milliseconds of real time per simulated tick, and how much game time a tick
+ *  covers. Time belongs to the player: the default is paused, the slowest
+ *  setting is one month every 16 seconds, and the fastest jumps a year at once. */
+export const SPEEDS: { s: Speed; label: string; title: string; ms: number; months: number }[] = [
+  { s: 0, label: "⏸", title: "Paused — advance time by hand", ms: 0, months: 1 },
+  { s: 0.25, label: "¼×", title: "1 month every 16s (a year in ~3 minutes)", ms: 16000, months: 1 },
+  { s: 0.5, label: "½×", title: "1 month every 8s (a year in ~1.5 minutes)", ms: 8000, months: 1 },
+  { s: 1, label: "1×", title: "1 month every 5s (a year in a minute)", ms: 5000, months: 1 },
+  { s: 2, label: "2×", title: "1 month every 2.5s", ms: 2500, months: 1 },
+  { s: 5, label: "5×", title: "1 month every second", ms: 1000, months: 1 },
+  { s: 12, label: "1y", title: "Jump a whole year every 9s", ms: 9000, months: 12 },
+];
+
+export const speedMs = (s: Speed) => SPEEDS.find((x) => x.s === s)?.ms ?? 0;
+export const speedMonths = (s: Speed) => SPEEDS.find((x) => x.s === s)?.months ?? 1;
+
+export function SpeedControls({
+  speed,
+  setSpeed,
+  onStep,
+}: {
+  speed: Speed;
+  setSpeed: (s: Speed) => void;
+  onStep?: (months: number) => void;
+}) {
   return (
-    <div className="flex overflow-hidden rounded-full border border-[var(--line)]" title="Simulation speed. Important events still pause the game.">
-      {opts.map((o) => (
-        <button
-          key={o.s}
-          title={o.title}
-          onClick={() => setSpeed(o.s)}
-          className={`px-2.5 py-1.5 text-xs ${speed === o.s ? "bg-amber-200/20 text-amber-200" : "text-[var(--muted)] hover:bg-white/5"}`}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div className="flex items-center gap-2">
+      {onStep ? (
+        <div className="flex overflow-hidden rounded-full border border-[var(--line)]" title="Advance time by hand">
+          <button
+            onClick={() => onStep(1)}
+            title="Live the next month"
+            className="px-2.5 py-1.5 text-xs text-[var(--muted)] hover:bg-white/5 hover:text-amber-200"
+          >
+            +1mo
+          </button>
+          <button
+            onClick={() => onStep(12)}
+            title="Live the next year"
+            className="px-2.5 py-1.5 text-xs text-[var(--muted)] hover:bg-white/5 hover:text-amber-200"
+          >
+            +1y
+          </button>
+        </div>
+      ) : null}
+      <div className="flex overflow-hidden rounded-full border border-[var(--line)]" title="Simulation speed. Important events still pause the game.">
+        {SPEEDS.map((o) => (
+          <button
+            key={o.s}
+            title={o.title}
+            onClick={() => setSpeed(o.s)}
+            className={`px-2.5 py-1.5 text-xs ${speed === o.s ? "bg-amber-200/20 text-amber-200" : "text-[var(--muted)] hover:bg-white/5"}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -88,8 +125,82 @@ export function NotifBell({ state }: { state: GameState }) {
   );
 }
 
-export function DebugModal({ state, act, onClose }: { state: GameState; act: (a: PlayerAction) => void; onClose: () => void }) {
-  const [result, setResult] = useState<string | null>(null);
+/* ------------------------------------------------------- secret treasury */
+
+/** The hidden owner-only pocket. Reached from an unmarked spot in the shell
+ *  (triple-click the save stamp / the seed line) or from the developer tools. */
+export function TreasuryModal({ state, act, onClose }: { state: GameState; act: (a: PlayerAction) => void; onClose: () => void }) {
+  const admin = state.adv?.admin ?? { unlocked: false, draws: 0, totalDrawn: 0 };
+  const [key, setKey] = useState("");
+  const [amount, setAmount] = useState(1_000_000);
+  const presets = [100_000, 1_000_000, 10_000_000, 100_000_000];
+  return (
+    <Modal title="The treasury" onClose={onClose}>
+      {admin.unlocked ? (
+        <div>
+          <p className="text-sm text-[var(--muted)]">
+            Admin access is on. A draw credits the wallet immediately and is written to the ledger, the timeline and lifetime statistics as
+            an admin draw — nothing here is silent.
+          </p>
+          <p className="mt-3 text-xs text-[var(--muted)]">
+            {admin.draws} draw{admin.draws === 1 ? "" : "s"} so far · ₹{(admin.totalDrawn ?? 0).toLocaleString("en-IN")} total
+            {admin.lastDraw ? ` · last in ${admin.lastDraw}` : ""}
+          </p>
+          <div className="mt-4">
+            <p className="tick">Amount</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {presets.map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setAmount(v)}
+                  className={`rounded-full border px-3 py-1 text-xs ${amount === v ? "border-amber-200/60 bg-amber-200/10 text-amber-200" : "border-white/10 text-[var(--muted)]"}`}
+                >
+                  {v.toLocaleString("en-IN")}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <Input type="number" min={1} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+              <Btn onClick={() => act({ type: "admin", op: "draw", amount })}>Draw</Btn>
+            </div>
+          </div>
+          <div className="mt-4">
+            <Btn kind="ghost" onClick={() => act({ type: "admin", op: "lock" })}>
+              Lock the treasury
+            </Btn>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <p className="text-sm text-[var(--muted)]">
+            This spot belongs to the owner of the world. Enter the admin key to unlock draws. Dev mode — switched on from the hidden
+            developer tools — unlocks it too.
+          </p>
+          <div className="mt-4 flex gap-2">
+            <Input type="password" value={key} placeholder="admin key" onChange={(e) => setKey(e.target.value)} />
+            <Btn onClick={() => act({ type: "admin", op: "unlock", key })}>Unlock</Btn>
+          </div>
+        </div>
+      )}
+      <p className="mt-4 text-[10px] text-[var(--muted)]">
+        Money drawn here enters the same authoritative state as everything else: it counts toward net worth and shows in the ledger. The
+        world does not react to it. It is an owner tool, not a game mechanic.
+      </p>
+    </Modal>
+  );
+}
+
+export function DebugModal({
+  state,
+  act,
+  onClose,
+  onTreasury,
+}: {
+  state: GameState;
+  act: (a: PlayerAction) => void;
+  onClose: () => void;
+  onTreasury?: () => void;
+}) {
   const [amount, setAmount] = useState(1_000_000);
   const [months, setMonths] = useState(12);
   const [rate, setRate] = useState(5);
@@ -102,10 +213,15 @@ export function DebugModal({ state, act, onClose }: { state: GameState; act: (a:
         Gated behind dev mode. These mutate the same authoritative state as normal gameplay — they are for testing the simulation, not for
         winning at it.
       </p>
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <Btn kind={enabled ? "danger" : "teal"} onClick={() => act({ type: "dev", op: "toggle" })}>
           {enabled ? "Disable dev mode" : "Enable dev mode"}
         </Btn>
+        {onTreasury ? (
+          <Btn kind="ghost" onClick={onTreasury}>
+            The treasury
+          </Btn>
+        ) : null}
       </div>
       {enabled ? (
         <div className="mt-4 space-y-2">
@@ -145,7 +261,6 @@ export function DebugModal({ state, act, onClose }: { state: GameState; act: (a:
           </div>
         </div>
       ) : null}
-      {result ? <p className="mt-3 text-sm text-amber-200">{result}</p> : null}
       <p className="mt-4 text-[10px] text-[var(--muted)]">
         <Label>Tip</Label> — the simulation stays consistent: recession → rates → mortgages → property → jobs → tax revenue → approval.
       </p>

@@ -8,7 +8,8 @@ import { history, note, timeline, unlock } from "./feed";
 import { companyRating, countryRating, type RatingInfo } from "./ratings";
 import type { GameState } from "./types";
 import { chance, clamp, formatDate, formatINR, pick, pushCap, round, uid } from "./util";
-import { liquidCash, portfolioValue, propertyValue, totalDebt, computeNetWorth } from "./finance";
+import { credit, liquidCash, money, monthlyLoanPayment, portfolioValue, propertyValue, runwayMonths, spend, totalDebt, computeNetWorth } from "./finance";
+import { minesView, type MinesSession } from "./mines";
 import { rng } from "./engine";
 
 /* ------------------------------------------------------------------ types */
@@ -107,7 +108,17 @@ export interface LedgerEntry {
 
 export interface MonthFlow {
   t: string;
+  income: number;
+  expenses: number;
   flows: Record<string, number>;
+}
+
+/** Admin/"treasury" access. Off by default; unlocked only with the key. */
+export interface AdminState {
+  unlocked: boolean;
+  draws: number;
+  totalDrawn: number;
+  lastDraw?: string;
 }
 
 export interface AdvState {
@@ -121,11 +132,18 @@ export interface AdvState {
   stats: LifetimeStats;
   challenge: ChallengeState | null;
   monthFlow: MonthFlow | null;
+  /** Rolling month-by-month cash-flow breakdown (newest first). */
+  flowHistory: MonthFlow[];
+  /** Accumulated severity of months where an obligation could not be met. */
+  shortfalls: number;
   ledger: LedgerEntry[];
   yearReview: YearReview | null;
   auctions: AuctionLot[];
   lastAuctionScan: number;
   ratings: Record<string, string>;
+  /** The live (or just-finished) Mines round. */
+  mines: MinesSession | null;
+  admin: AdminState;
 }
 
 export interface CalendarItem {
@@ -350,6 +368,8 @@ export const RESEARCH_TOPICS: {
   { id: "politics", title: "Political landscape", cost: 30000, months: 1, desc: "Party standings, approval and the issues that move voters.", target: "none" },
   { id: "country", title: "Foreign country profile", cost: 50000, months: 2, desc: "Business environment, taxes, property and entry risks for one country.", target: "country" },
   { id: "tech", title: "Technology frontier", cost: 25000, months: 1, desc: "Where AI, robotics and automation stand — and what they displace.", target: "none" },
+  { id: "cashflow", title: "Personal cash-flow audit", cost: 20000, months: 1, desc: "Your own money: 12-month flows, fixed burn, runway, leaks and what to cut first.", target: "none" },
+  { id: "debt", title: "Debt & credit review", cost: 30000, months: 1, desc: "Every facility: true cost, amortisation, refinance and consolidation options.", target: "none" },
 ];
 
 function researchFindings(state: GameState, topic: string, targetId?: string): string[] {
@@ -423,7 +443,210 @@ function researchFindings(state: GameState, topic: string, targetId?: string): s
       "New tech creates new firms; check Opportunities for emerging sectors.",
     ];
   }
+  if (topic === "cashflow") return cashFlowFindings(state);
+  if (topic === "debt") return debtFindings(state);
   return ["Study pending."];
+}
+
+/** Real numbers from the player's own flow history — no generic advice. */
+function cashFlowFindings(state: GameState): string[] {
+  const rep = cashFlowReport(state);
+  const out = [
+    `Last ${rep.monthsCovered} months: in ${formatINR(rep.income12)}, out ${formatINR(rep.expense12)}, net ${formatINR(rep.net12)}.`,
+    `Fixed monthly burn ${formatINR(rep.fixedBurn)} (living ${formatINR(rep.living)}, loans ${formatINR(rep.loans)}, advisors ${formatINR(rep.advisors)}, upkeep ${formatINR(rep.upkeep)}, fees ${formatINR(rep.fees)}, insurance ${formatINR(rep.insurance)}, tuition ${formatINR(rep.tuition)}).`,
+    `Runway on liquid cash: ${rep.runway === Infinity ? "not burning — income covers expenses" : `${rep.runway.toFixed(1)} months`}.`,
+  ];
+  if (rep.biggestLeak) out.push(`Largest single outflow: ${rep.biggestLeak.label} at ${formatINR(rep.biggestLeak.value)}/mo.`);
+  if (rep.shortfallMonths > 0)
+    out.push(`You were short in ${rep.shortfallMonths} of the last ${rep.monthsCovered} months — arrears now ${formatINR(rep.arrears)}.`);
+  out.push(
+    rep.net12 >= 0
+      ? "Cash flow is positive. The lever now is where the surplus compounds: debt paydown vs investment vs capacity."
+      : "Cash flow is negative. Cut the largest discretionary line first, then renegotiate fixed commitments — in that order.",
+  );
+  return out;
+}
+
+function debtFindings(state: GameState): string[] {
+  const p = state.player;
+  const loans = p.finances.loans.filter((l) => l.status !== "paid");
+  if (!loans.length) return ["No open facilities. Your credit score is the asset to protect — utilisation is zero."];
+  const totalInterest = loans.reduce((s, l) => s + (money(l.remaining) * money(l.rate)) / 100 / 12, 0);
+  const worst = [...loans].sort((a, b) => money(b.rate) - money(a.rate))[0]!;
+  const bank = state.world.banks.find((b) => b.countryId === p.countryId);
+  const out = [
+    `${loans.length} open facilities, ${formatINR(totalDebt(p))} outstanding, ${formatINR(totalInterest)}/month in interest.`,
+    `Deepest rate: ${worst.kind} at ${money(worst.rate).toFixed(2)}% (${formatINR(worst.remaining)} left, ${formatINR(worst.monthly)}/mo).`,
+    `Credit score ${Math.round(p.finances.creditScore)}, payment history ${Math.round(p.finances.paymentHistory)}, defaults ${p.finances.defaults}.`,
+  ];
+  if (bank) {
+    const refi = bank.lendingRate + (p.finances.creditScore > 740 ? -1 : 1.5);
+    out.push(
+      refi < money(worst.rate) - 0.5
+        ? `Refinancing the ${worst.kind} loan at ~${refi.toFixed(2)}% would save ~${formatINR(((money(worst.rate) - refi) / 100 / 12) * money(worst.remaining))}/month.`
+        : `Current market rates (~${refi.toFixed(2)}%) do not beat your worst facility — refinance later, or pay principal down instead.`,
+    );
+  }
+  out.push(
+    `Next instalments: ${loans.map((l) => `${l.kind} ${formatINR(l.monthly)}`).join(", ")}. Total scheduled ${formatINR(loans.reduce((s, l) => s + money(l.monthly), 0))}/mo.`,
+  );
+  return out;
+}
+
+/* ------------------------------------------------------------- cash flow */
+
+export interface FlowLine {
+  key: string;
+  label: string;
+  value: number;
+}
+
+export interface CashFlowReport {
+  t: string;
+  monthsCovered: number;
+  income: number;
+  expenses: number;
+  net: number;
+  income12: number;
+  expense12: number;
+  net12: number;
+  incomeLines: FlowLine[];
+  expenseLines: FlowLine[];
+  income12Lines: FlowLine[];
+  expense12Lines: FlowLine[];
+  fixedBurn: number;
+  living: number;
+  loans: number;
+  advisors: number;
+  upkeep: number;
+  fees: number;
+  insurance: number;
+  tuition: number;
+  arrears: number;
+  runway: number;
+  liquid: number;
+  biggestLeak: { label: string; value: number } | null;
+  shortfallMonths: number;
+}
+
+const FLOW_LABELS: Record<string, string> = {
+  salary: "Salary",
+  freelance: "Freelance",
+  rent: "Rent received",
+  dividends: "Dividends",
+  coupons: "Bond coupons",
+  interest: "Deposit interest",
+  draws: "Business draws",
+  grants: "Grants",
+  media: "Media advertising",
+  mediaCosts: "Newsroom costs",
+  casino: "Casino floor",
+  gambling: "Gambling",
+  crime: "Underground",
+  forecast: "Forecasts & insights",
+  taxes: "Income tax",
+  living: "Living costs",
+  upkeep: "Property upkeep",
+  construction: "Construction",
+  insurance: "Insurance",
+  tuition: "Tuition",
+  loans: "Loan instalments",
+  loanInterest: "  of which interest",
+  advisors: "Advisors & staff",
+  fees: "Bank & late fees",
+  arrears: "Unpaid (arrears)",
+};
+
+const INCOME_KEYS = new Set([
+  "salary", "freelance", "rent", "dividends", "coupons", "interest", "draws", "grants", "media", "casino", "gambling", "crime", "forecast",
+]);
+
+export const flowLabel = (key: string) => FLOW_LABELS[key] ?? key;
+export const isIncomeKey = (key: string) => INCOME_KEYS.has(key);
+
+export function cashFlowReport(state: GameState): CashFlowReport {
+  const adv = getAdv(state);
+  const p = state.player;
+  const hist = adv.flowHistory.slice(0, 12); // newest first
+  const current = adv.monthFlow;
+  const months = current ? [current, ...hist.filter((h) => h.t !== current.t)] : hist;
+  const take = months.slice(0, 12);
+
+  // Classify by sign first, then by key: a "casino" or "media" month can be a
+  // loss, and a loss belongs on the expense side of the report.
+  const sumLines = (wantIncome: boolean) => {
+    const acc: Record<string, number> = {};
+    for (const m of take) {
+      for (const [k, v] of Object.entries(m.flows ?? {})) {
+        const val = money(v);
+        if (val === 0) continue;
+        if ((val > 0) !== wantIncome) continue;
+        acc[k] = (acc[k] ?? 0) + val;
+      }
+    }
+    return Object.entries(acc)
+      .map(([key, value]) => ({ key, label: flowLabel(key), value: round(value, 0) }))
+      .filter((l) => Math.abs(l.value) > 0)
+      .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  };
+
+  const income12Lines = sumLines(true);
+  const expense12Lines = sumLines(false);
+  const income12 = income12Lines.reduce((s, l) => s + l.value, 0);
+  const expense12 = expense12Lines.reduce((s, l) => s + Math.abs(l.value), 0);
+
+  const cur = current?.flows ?? {};
+  const g = (k: string) => money(cur[k]);
+  const n = take.length || 1;
+  const avg = (k: string) => round(take.reduce((s, m) => s + money(m.flows?.[k]), 0) / n, 0);
+
+  const fixedBurn = Math.abs(avg("living")) + Math.abs(avg("loans")) + Math.abs(avg("advisors")) + Math.abs(avg("upkeep")) + Math.abs(avg("fees")) + Math.abs(avg("insurance")) + Math.abs(avg("tuition"));
+  const leaks = expense12Lines.filter((l) => l.key !== "loanInterest");
+  return {
+    t: current?.t ?? formatDate(state.time.year, state.time.month),
+    monthsCovered: take.length,
+    income: round(money(current?.income), 0),
+    expenses: round(money(current?.expenses), 0),
+    net: round(money(current?.income) - money(current?.expenses), 0),
+    income12: round(income12, 0),
+    expense12: round(expense12, 0),
+    net12: round(income12 - expense12, 0),
+    incomeLines: Object.entries(cur).filter(([, v]) => money(v) > 0).map(([key, value]) => ({ key, label: flowLabel(key), value: round(value, 0) })).sort((a, b) => b.value - a.value),
+    expenseLines: Object.entries(cur).filter(([, v]) => money(v) < 0).map(([key, value]) => ({ key, label: flowLabel(key), value: round(value, 0) })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)),
+    income12Lines,
+    expense12Lines,
+    fixedBurn: round(fixedBurn, 0),
+    living: Math.abs(avg("living")),
+    loans: Math.abs(avg("loans")),
+    advisors: Math.abs(avg("advisors")),
+    upkeep: Math.abs(avg("upkeep")),
+    fees: Math.abs(avg("fees")),
+    insurance: Math.abs(avg("insurance")),
+    tuition: Math.abs(avg("tuition")),
+    arrears: round(money(p.finances.arrears), 0),
+    runway: runwayMonths(state),
+    liquid: round(liquidCash(p), 0),
+    biggestLeak: leaks.length ? { label: leaks[0]!.label, value: Math.round(Math.abs(leaks[0]!.value) / n) } : null,
+    shortfallMonths: take.filter((m) => Math.abs(money(m.flows?.arrears)) > 0).length,
+  };
+}
+
+/* ----------------------------------------------------------------- mines */
+
+/** A live round is settled if it has been sitting open for a year of game time,
+ *  so a stake can never be stranded in an unfinished round. */
+function tickMines(state: GameState) {
+  const adv = getAdv(state);
+  const m = adv.mines;
+  if (!m || m.status !== "live") return;
+  if (state.ticks - m.startTick < 12) return;
+  const v = minesView(m);
+  m.status = "cashed";
+  m.payout = round(v.cashoutNow, 2);
+  credit(state.player, m.payout, `Mines auto cash-out (${v.safePicked} gems)`, "gamble", formatDate(state.time.year, state.time.month));
+  state.player.gambling.lifetimeWon += m.payout;
+  note(state, `Mines round auto-cashed after a year: ${formatINR(m.payout)} (${v.multiplier.toFixed(2)}×).`, "info");
+  ledger(state, `Mines auto cash-out · ${v.safePicked} gems`, round(m.payout - m.stake, 0));
 }
 
 /* ------------------------------------------------------------------ ratings */
@@ -467,19 +690,37 @@ export function initAdv(state: GameState, seedLabel: string): AdvState {
     stats: blankStats(state),
     challenge: null,
     monthFlow: null,
+    flowHistory: [],
+    shortfalls: 0,
     ledger: [],
     yearReview: null,
     auctions: [],
     lastAuctionScan: 0,
     ratings: {},
+    mines: null,
+    admin: { unlocked: false, draws: 0, totalDrawn: 0 },
   };
 }
 
 export function getAdv(state: GameState): AdvState {
   if (!state.adv) {
     state.adv = initAdv(state, state.seedLabel || String(state.seed));
+    return state.adv;
   }
-  return state.adv;
+  const adv = state.adv;
+  // Older saves predate these fields — fill them so nothing downstream reads
+  // `undefined` and turns a balance into NaN.
+  if (!Array.isArray(adv.flowHistory)) adv.flowHistory = [];
+  if (!Number.isFinite(adv.shortfalls)) adv.shortfalls = 0;
+  if (adv.mines === undefined) adv.mines = null;
+  if (!adv.admin) adv.admin = { unlocked: false, draws: 0, totalDrawn: 0 };
+  if (adv.monthFlow && !Number.isFinite(adv.monthFlow.income)) {
+    adv.monthFlow = { t: adv.monthFlow.t, income: 0, expenses: 0, flows: adv.monthFlow.flows };
+  }
+  if (!Array.isArray(adv.ledger)) adv.ledger = [];
+  if (!Array.isArray(adv.auctions)) adv.auctions = [];
+  if (!adv.ratings) adv.ratings = {};
+  return adv;
 }
 
 export function ledger(state: GameState, text: string, amount: number) {
@@ -564,12 +805,7 @@ function settleForecasts(state: GameState) {
 }
 
 function creditNote(state: GameState, amount: number, desc: string, date: string) {
-  state.player.finances.cash += amount;
-  const acct = state.player.finances.accounts[0];
-  if (acct) {
-    acct.transactions.unshift({ id: uid("tx"), date, desc, amount, bal: acct.balance + state.player.finances.cash, cat: "forecast" });
-    if (acct.transactions.length > 80) acct.transactions.length = 80;
-  }
+  credit(state.player, amount, desc, "insight", date);
 }
 
 function tickAdvisors(state: GameState) {
@@ -577,22 +813,24 @@ function tickAdvisors(state: GameState) {
   const p = state.player;
   const date = formatDate(state.time.year, state.time.month);
   for (const a of [...adv.advisors]) {
-    const ok = p.finances.cash >= a.salary;
-    if (ok) p.finances.cash -= a.salary;
-    const acct = p.finances.accounts[0];
-    if (acct) {
-      const take = ok ? a.salary : acct.balance;
-      acct.balance = Math.max(0, acct.balance - take);
-      acct.transactions.unshift({ id: uid("tx"), date, desc: `Advisor · ${a.name}`, amount: -take, bal: acct.balance, cat: "advisor" });
-      if (acct.transactions.length > 80) acct.transactions.length = 80;
+    // One charge, taken from the liquid pool (wallet then accounts). The old
+    // code debited the wallet AND the first account for the same salary — and,
+    // when the wallet was short, emptied the account outright.
+    const ok = spend(p, a.salary, `Advisor · ${a.name}`, "advisor", date);
+    if (ok) {
+      const mf = adv.monthFlow;
+      if (mf) mf.flows.advisors = round(money(mf.flows.advisors) - a.salary, 2);
+      p.finances.monthlyExpenses = round(money(p.finances.monthlyExpenses) + a.salary, 2);
+      adv.stats.spent += a.salary;
     }
     if (!ok) {
       adv.advisors = adv.advisors.filter((x) => x.id !== a.id);
       note(state, `Could not pay ${a.name}. The engagement ended.`, "warn");
+      ledger(state, `Advisor released: ${a.name} (unpaid)`, 0);
       continue;
     }
-    if (a.defId === "accountant" && adv.monthFlow && adv.monthFlow.flows.taxes > 0) {
-      const reb = adv.monthFlow.flows.taxes * 0.08 * (a.skill / 75);
+    if (a.defId === "accountant" && adv.monthFlow && Math.abs(money(adv.monthFlow.flows.taxes)) > 0) {
+      const reb = Math.abs(money(adv.monthFlow.flows.taxes)) * 0.08 * (a.skill / 75);
       creditNote(state, reb, "Tax advisory saving", date);
     }
     if (a.defId === "political" && p.politics.role !== "none") {
@@ -705,7 +943,7 @@ function tickStats(state: GameState) {
   s.spent += p.finances.monthlyExpenses;
   s.yearEarned += p.finances.monthlyIncome;
   s.yearSpent += p.finances.monthlyExpenses;
-  if (adv.monthFlow) s.taxes += adv.monthFlow.flows.taxes ?? 0;
+  // taxes accrue in tickPlayerMoney (single source of truth)
   s.jobs = p.career.history.length;
   s.elections = p.politics.elections.length;
   s.convictions = p.crime.convictions;
@@ -769,13 +1007,37 @@ function buildYearReview(state: GameState) {
 
 export function tickAdvanced(state: GameState) {
   settleForecasts(state);
+  tickMines(state);
   tickAdvisors(state);
   tickResearch(state);
   tickChallenges(state);
+  closeMonthFlow(getAdv(state));
   tickStats(state);
   ratingsTick(state);
   if (state.ticks - getAdv(state).lastAuctionScan >= 2) scanAuctions(state);
   if (state.time.month === 12) buildYearReview(state);
+}
+
+/** Memo keys are sub-lines, not separate movements: `loanInterest` is part of
+ *  `loans`, `arrears` is the unpaid part of `living`. Summing them double counts. */
+const FLOW_MEMO_KEYS = new Set(["loanInterest", "arrears"]);
+
+/** Close the month. Flows are signed (income +, expense −) and several systems
+ *  post to them during a tick, so totals are recomputed once everything is in. */
+export function closeMonthFlow(adv: AdvState): void {
+  const mf = adv.monthFlow;
+  if (!mf) return;
+  let income = 0;
+  let expenses = 0;
+  for (const [k, v] of Object.entries(mf.flows)) {
+    if (FLOW_MEMO_KEYS.has(k)) continue;
+    const n = money(v);
+    if (n > 0) income += n;
+    else expenses += -n;
+  }
+  mf.income = round(income, 0);
+  mf.expenses = round(expenses, 0);
+  pushCap(adv.flowHistory, { t: mf.t, income: mf.income, expenses: mf.expenses, flows: { ...mf.flows } }, 36);
 }
 
 /* ---------------------------------------------------------------- calendar */

@@ -1,6 +1,18 @@
-import { getAdv, hasAdvisor, tickAdvanced } from "./advanced";
+import { getAdv, hasAdvisor, ledger, tickAdvanced } from "./advanced";
 import { FIRST_NAMES, INDUSTRIES, LAST_NAMES, industryMeta } from "./catalog";
-import { computeNetWorth, credit, livingCostFor, recordNetWorth, spend, totalDebt } from "./finance";
+import {
+  computeNetWorth,
+  credit,
+  liquidCash,
+  livingCostFor,
+  loanSplit,
+  money,
+  monthlyLoanPayment,
+  recordNetWorth,
+  spend,
+  spendUpTo,
+  totalDebt,
+} from "./finance";
 import { news, note, timeline, history, unlock } from "./feed";
 import type {
   Country,
@@ -9,7 +21,7 @@ import type {
   ListedCompany,
   Opportunity,
 } from "./types";
-import { chance, clamp, formatDate, monthName, mulberry32, normal, pick, round, uid } from "./util";
+import { chance, clamp, formatDate, formatINR, monthName, mulberry32, normal, pick, round, uid } from "./util";
 
 function rng(state: GameState): number {
   const r = mulberry32(state.rng || state.seed || 1)();
@@ -56,6 +68,7 @@ function tickOnce(state: GameState) {
   tickPolitics(state);
   tickCrime(state);
   tickSocial(state);
+  tickCasinos(state);
   tickHealth(state);
   tickNpcs(state);
   maybeEvents(state);
@@ -443,16 +456,16 @@ function tickPlayerMoney(state: GameState) {
     income += net;
     p.finances.taxPaidYtd += tax;
     credit(p, net, p.career.job.title + " salary", "salary", date);
-    addFlow("salary", net);
-    addFlow("tax", tax);
+    addFlow("salary", gross + bonus);
+    addFlow("taxes", -tax);
   }
   if (p.career.freelance.active) {
     const g = p.career.freelance.rate * p.career.freelance.hours * 4.3;
     const tax = g * (country.incomeTax / 100) * 0.4;
     income += g - tax;
     credit(p, g - tax, "Freelance", "freelance", date);
-    addFlow("freelance", g - tax);
-    addFlow("tax", tax);
+    addFlow("freelance", g);
+    addFlow("taxes", -tax);
   }
 
   for (const prop of p.properties) {
@@ -468,14 +481,14 @@ function tickPlayerMoney(state: GameState) {
     const maint = prop.maintenance + prop.tax;
     expenses += maint;
     spend(p, maint, `Upkeep · ${prop.name}`, "property", date);
-    addFlow("upkeep", maint);
+    addFlow("upkeep", -maint);
     if (prop.development && prop.development.stage === "building") {
       prop.development.progress = clamp(prop.development.progress + 8 + rng(state) * 6, 0, 100);
       const burn = prop.development.budget * 0.08;
       prop.development.spent += burn;
       spend(p, burn, `Construction · ${prop.name}`, "build", date);
       expenses += burn;
-      addFlow("construction", burn);
+      addFlow("construction", -burn);
       if (prop.development.progress >= 100) {
         prop.development.stage = "complete";
         prop.value *= 1.35;
@@ -512,62 +525,91 @@ function tickPlayerMoney(state: GameState) {
     if (a.fee > 0) {
       a.balance -= a.fee;
       expenses += a.fee;
-      addFlow("fees", a.fee);
+      addFlow("fees", -a.fee);
     }
   }
 
-  const live = livingCostFor(state);
-  p.finances.livingCost = live;
+  // Living costs run in arrears when you are short: you pay what you have and
+  // the rest becomes a debt to the household, not a confiscation of the balance.
+  const carried = money(p.finances.arrears);
+  const live = livingCostFor(state) + carried;
+  p.finances.livingCost = livingCostFor(state);
   expenses += live;
-  addFlow("living", live);
-  if (!spend(p, live, "Living costs", "live", date)) {
-    p.finances.cash = 0;
-    p.stress += 8;
-    p.happiness -= 4;
-    p.finances.creditScore = clamp(p.finances.creditScore - 6, 300, 900);
-    note(state, "You could not cover living costs this month.", "bad");
+  addFlow("living", -live);
+  const life = spendUpTo(p, live, "Living costs", "live", date);
+  if (life.short > 0) {
+    p.finances.arrears = round(life.short, 2);
+    const severity = clamp(life.short / Math.max(1, live), 0, 1);
+    p.stress = clamp(p.stress + 3 + severity * 8, 0, 100);
+    p.happiness = clamp(p.happiness - 1.5 - severity * 4, 1, 100);
+    p.health = clamp(p.health - severity * 1.2, 1, 100);
+    p.finances.creditScore = clamp(p.finances.creditScore - 2 - severity * 6, 300, 900);
+    addFlow("arrears", -life.short);
+    shortfall(state, `Living costs short by ${formatINR(life.short)} — carried to next month.`, severity);
+  } else if (carried > 0) {
+    p.finances.arrears = 0;
+    note(state, `Backlog cleared (${formatINR(carried)} of unpaid living costs settled).`, "good");
   }
 
   if (p.insurance.premium > 0) {
     expenses += p.insurance.premium;
     spend(p, p.insurance.premium, "Insurance premium", "ins", date);
-    addFlow("insurance", p.insurance.premium);
+    addFlow("insurance", -p.insurance.premium);
   }
   if (p.currentStudy && p.currentStudy.tuition > 0) {
     const m = p.currentStudy.tuition / 12;
     expenses += m;
     spend(p, m, "Tuition", "edu", date);
-    addFlow("tuition", m);
+    addFlow("tuition", -m);
   }
 
   for (const loan of p.finances.loans) {
     if (loan.status === "paid") continue;
-    const due = Math.min(loan.monthly, loan.remaining);
-    const ok = spend(p, due, `${loan.kind} loan`, "loan", date);
-    if (ok) {
-      loan.remaining = Math.max(0, loan.remaining - due * 0.72);
+    // Interest accrues on the outstanding balance first; whatever is left of
+    // the instalment reduces principal. Late interest capitalises.
+    const interest = Math.max(0, (money(loan.remaining) * money(loan.rate)) / 100 / 12);
+    const due = round(Math.min(money(loan.monthly), money(loan.remaining) + interest), 2);
+    const paid = spendUpTo(p, due, `${loan.kind} loan instalment`, "loan", date);
+    expenses += paid.paid;
+    if (paid.paid > 0) addFlow("loans", -paid.paid);
+    const split = loanSplit(loan.remaining, loan.rate, paid.paid);
+    addFlow("loanInterest", -split.interest);
+    loan.remaining = round(Math.max(0, money(loan.remaining) - split.principal), 2);
+
+    if (paid.short <= 0) {
       loan.monthsLeft -= 1;
       loan.missed = 0;
       loan.status = "current";
       p.finances.paymentHistory = clamp(p.finances.paymentHistory + 0.4, 0, 100);
       p.finances.creditScore = clamp(p.finances.creditScore + 0.3, 300, 900);
-      expenses += due;
-      addFlow("loans", due);
-      if (loan.remaining <= 1 || loan.monthsLeft <= 0) {
+      if (loan.remaining <= 1) {
         loan.status = "paid";
         loan.remaining = 0;
         note(state, `Loan paid off (${loan.kind}).`, "good");
+        timeline(state, `Cleared the ${loan.kind} loan from ${loan.lender}.`, "finance");
       }
-    } else {
-      loan.missed += 1;
-      loan.status = loan.missed >= 3 ? "default" : "late";
-      p.finances.creditScore = clamp(p.finances.creditScore - 18, 300, 850);
-      p.finances.paymentHistory = clamp(p.finances.paymentHistory - 8, 0, 100);
-      if (loan.status === "default") {
-        p.finances.defaults += 1;
-        note(state, `A ${loan.kind} loan has defaulted. Credit and collateral are at risk.`, "bad");
-        history(state, "finance", `Defaulted on ${loan.kind} loan`);
-      }
+      continue;
+    }
+
+    // Shortfall: unpaid interest is added to the balance and a late fee hits.
+    const lateFee = round(Math.max(250, due * 0.02), 2);
+    loan.remaining = round(loan.remaining + split.interest - Math.max(0, paid.paid - interest) + lateFee, 2);
+    loan.monthly = monthlyLoanPayment(loan.remaining, loan.rate, Math.max(1, loan.monthsLeft));
+    loan.missed += 1;
+    loan.status = loan.missed >= 3 ? "default" : "late";
+    p.finances.creditScore = clamp(p.finances.creditScore - (loan.status === "default" ? 18 : 9), 300, 850);
+    p.finances.paymentHistory = clamp(p.finances.paymentHistory - 8, 0, 100);
+    expenses += lateFee;
+    addFlow("fees", -lateFee);
+    shortfall(
+      state,
+      `${loan.kind} loan short by ${formatINR(paid.short)} (late fee ${formatINR(lateFee)}, interest capitalised).`,
+      clamp(paid.short / Math.max(1, due), 0, 1),
+    );
+    if (loan.status === "default" && loan.missed === 3) {
+      p.finances.defaults += 1;
+      note(state, `A ${loan.kind} loan has defaulted. Credit and collateral are at risk.`, "bad");
+      history(state, "finance", `Defaulted on ${loan.kind} loan`);
     }
   }
 
@@ -589,12 +631,24 @@ function tickPlayerMoney(state: GameState) {
     if (co.profit > 0) unlock(state, "profit_month");
   }
 
-  p.finances.monthlyIncome = income;
-  p.finances.monthlyExpenses = expenses;
-  getAdv(state).monthFlow = { t: date, flows: flow };
+  p.finances.monthlyIncome = round(income, 2);
+  p.finances.monthlyExpenses = round(expenses, 2);
+  const adv = getAdv(state);
+  // Totals are finalised in closeMonthFlow() once media, casinos and advisors have posted.
+  adv.monthFlow = { t: date, income: round(income, 2), expenses: round(expenses, 2), flows: flow };
+  adv.stats.taxes += Math.abs(flow.taxes ?? 0);
 
-  if (p.finances.cash + p.finances.accounts.reduce((s, a) => s + a.balance, 0) >= 10000) unlock(state, "cash_10k");
-  if (p.finances.cash + p.finances.accounts.reduce((s, a) => s + a.balance, 0) >= 100000) unlock(state, "cash_1l");
+  const liquid = liquidCash(p);
+  if (liquid >= 10000) unlock(state, "cash_10k");
+  if (liquid >= 100000) unlock(state, "cash_1l");
+}
+
+/** A month where an obligation could not be met. Recorded once, honestly. */
+function shortfall(state: GameState, text: string, severity: number) {
+  const adv = getAdv(state);
+  adv.shortfalls = round(money(adv.shortfalls) + severity, 2);
+  note(state, text, severity > 0.5 ? "bad" : "warn");
+  ledger(state, text, 0);
 }
 
 function tickProperties(state: GameState) {
@@ -719,17 +773,73 @@ function tickCrime(state: GameState) {
 
 function tickSocial(state: GameState) {
   const p = state.player;
+  const date = formatDate(state.time.year, state.time.month);
   for (const a of p.social.platforms) {
     a.followers = Math.max(0, Math.round(a.followers * (1 + a.engagement / 400) + (p.reputation.social - 20) * 0.02));
   }
   p.social.followers = p.social.platforms.reduce((s, a) => s + a.followers, 0);
-  for (const cid of p.media.outlets) {
-    void cid;
-    const country = state.world.countries.find((c) => c.id === p.countryId)!;
-    const ad = 40000 * (country.gdpGrowth > 0 ? 1.1 : 0.85);
-    credit(p, ad, "Media advertising", "media", formatDate(state.time.year, state.time.month));
-    const mf = getAdv(state).monthFlow;
-    if (mf) mf.flows.media = (mf.flows.media ?? 0) + ad;
+
+  // Outlets run a real P&L: advertising revenue follows reach, the economy and
+  // inflation, and newsroom costs follow inflation too. An outlet can lose
+  // money — it used to be a free ₹40k/month faucet per launch.
+  const country = state.world.countries.find((c) => c.id === p.countryId)!;
+  const mf = getAdv(state).monthFlow;
+  for (const name of p.media.outlets) {
+    const reach = 0.55 + Math.min(1.4, p.social.followers / 250000) + p.reputation.media / 220;
+    const cycle = country.gdpGrowth > 1.5 ? 1.15 : country.gdpGrowth > 0 ? 1.02 : 0.78;
+    const ad = round(38000 * reach * cycle * (1 + country.inflation / 300), 0);
+    const costs = round(26000 * (1 + country.inflation / 220) * (0.9 + rng(state) * 0.25), 0);
+    credit(p, ad, `Advertising · ${name}`, "media", date);
+    if (mf) mf.flows.media = round(money(mf.flows.media) + ad, 2);
+    const paid = spendUpTo(p, costs, `Newsroom costs · ${name}`, "media", date);
+    if (mf) mf.flows.mediaCosts = round(money(mf.flows.mediaCosts) - paid.paid, 2);
+    if (paid.short > 0) {
+      p.reputation.media = clamp(p.reputation.media - 1, 0, 100);
+      if (chance(rng.bind(null, state), 0.4)) {
+        note(state, `${name} could not meet its newsroom costs (${formatINR(paid.short)} short). Staff are leaving.`, "warn");
+      }
+    }
+  }
+}
+
+/** Player-owned houses. Money spent founding one used to disappear: the casino
+ *  was created and never simulated again. Now it runs a monthly P&L. */
+function tickCasinos(state: GameState) {
+  const p = state.player;
+  if (!state.world.casinos.length) return;
+  const date = formatDate(state.time.year, state.time.month);
+  const mf = getAdv(state).monthFlow;
+  for (const c of state.world.casinos) {
+    const city = state.world.cities.find((x) => x.id === c.cityId);
+    const country = state.world.countries.find((x) => x.id === c.countryId);
+    if (!city || !country) continue;
+    const target =
+      (city.population / 1e6) * 6_000_000 * (0.55 + c.marketing / 120) * (0.8 + city.tourism / 200) * (country.gdpGrowth > 0 ? 1.05 : 0.88);
+    c.volume = Math.max(0, round(c.volume * 0.82 + target * 0.18, 0));
+    const edge = 0.045; // blended house edge across roulette/dice/cards/slots/mines
+    c.revenue = round(c.volume * edge, 0);
+    c.costs = round(c.staff * 18000 + c.security * 5000 + 140000 * (1 + country.inflation / 250), 0);
+    c.regulation = clamp(c.regulation + (rng(state) - 0.5) * 2 + (p.reputation.personal - 50) * 0.01, 5, 95);
+    const net = c.revenue - c.costs;
+    if (net >= 0) {
+      credit(p, net, `Casino net · ${c.name}`, "casino", date);
+      if (mf) mf.flows.casino = round(money(mf.flows.casino) + net, 2);
+    } else {
+      const paid = spendUpTo(p, -net, `Casino losses · ${c.name}`, "casino", date);
+      if (mf) mf.flows.casino = round(money(mf.flows.casino) - paid.paid, 2);
+      if (paid.short > 0 && chance(rng.bind(null, state), 0.5)) {
+        note(state, `${c.name} could not cover its floor costs (${formatINR(paid.short)} short).`, "bad");
+      }
+    }
+    if (c.regulation < 25 && chance(rng.bind(null, state), 0.12)) {
+      const fine = round(c.revenue * 0.6 + 250000, 0);
+      const paid = spendUpTo(p, fine, `Regulatory fine · ${c.name}`, "casino", date);
+      if (mf) mf.flows.fees = round(money(mf.flows.fees) - paid.paid, 2);
+      c.regulation = clamp(c.regulation + 12, 5, 95);
+      note(state, `Regulators fined ${c.name} ${formatINR(fine)} for weak controls.`, "bad");
+      ledger(state, `Casino fine · ${c.name}`, -paid.paid);
+    }
+    if (chance(rng.bind(null, state), 0.25)) c.marketing = clamp(c.marketing + (rng(state) - 0.5) * 4, 5, 95);
   }
 }
 

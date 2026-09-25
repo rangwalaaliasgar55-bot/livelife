@@ -9,7 +9,8 @@ import { LineListModal } from "./overlays";
 import type { EducationTrack, GameState, Industry, PlayerAction, PolicyVector, SkillId } from "@/lib/sim/types";
 import { formatINR, formatPct } from "@/lib/sim/util";
 import { Btn, Card, Delta, Field, Input, Label, Meter, Money, Select, Spark, Table } from "./ui";
-import { Analysis, CalendarP, Research, Staff, StatsP } from "./panels2";
+import { Analysis, CalendarP, CashFlow, Research, Staff, StatsP } from "./panels2";
+import { MinesGame } from "./MinesGame";
 
 export function Panels({
   view,
@@ -23,6 +24,7 @@ export function Panels({
   busy: boolean;
 }) {
   if (view === "staff") return <Staff state={state} act={act} />;
+  if (view === "cashflow") return <CashFlow state={state} act={act} />;
   if (view === "analysis") return <Analysis state={state} />;
   if (view === "research") return <Research state={state} act={act} />;
   if (view === "stats") return <StatsP state={state} act={act} />;
@@ -1102,44 +1104,37 @@ function Media({ state, act }: { state: GameState; act: (a: PlayerAction) => voi
 function Under({ state, act, busy }: { state: GameState; act: (a: PlayerAction) => void; busy: boolean }) {
   const g = state.player.gambling;
   const [stake, setStake] = useState(1000);
-  const [picks, setPicks] = useState(3);
   const [org, setOrg] = useState("Circle of Ember");
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <Label>Fictional wagering · house games</Label>
-        <p className="text-xs text-[var(--muted)]">Play money only. Probabilities shown. No real-money gambling.</p>
-        <Field label="Stake ₹">
-          <Input type="number" value={stake} onChange={(e) => setStake(Number(e.target.value))} />
+        <p className="text-xs text-[var(--muted)]">
+          Play money only. Probabilities shown. No real-money gambling. A stake you cannot cover is refused outright — your balance is
+          never touched by a bet that did not happen.
+        </p>
+        <Field label={`Stake ₹ (liquid ${formatINR(liquidCash(state.player))})`}>
+          <Input type="number" min={0} value={stake} onChange={(e) => setStake(Math.max(0, Number(e.target.value)))} />
         </Field>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Btn kind="ghost" disabled={busy} onClick={() => void act({ type: "gamble", game: "roulette", stake, extra: { color: "red" } })}>
+          <Btn kind="ghost" disabled={busy || stake <= 0 || stake > liquidCash(state.player)} onClick={() => void act({ type: "gamble", game: "roulette", stake, extra: { color: "red" } })}>
             Roulette red (48.6% of 1–36, 0 is house)
           </Btn>
-          <Btn kind="ghost" disabled={busy} onClick={() => void act({ type: "gamble", game: "dice", stake, extra: { over: 5 } })}>
+          <Btn kind="ghost" disabled={busy || stake <= 0 || stake > liquidCash(state.player)} onClick={() => void act({ type: "gamble", game: "dice", stake, extra: { over: 5 } })}>
             Dice ≥5
           </Btn>
-          <Btn kind="ghost" disabled={busy} onClick={() => void act({ type: "gamble", game: "cards", stake })}>
+          <Btn kind="ghost" disabled={busy || stake <= 0 || stake > liquidCash(state.player)} onClick={() => void act({ type: "gamble", game: "cards", stake })}>
             Cards
           </Btn>
-          <Btn kind="ghost" disabled={busy} onClick={() => void act({ type: "gamble", game: "slots", stake })}>
+          <Btn kind="ghost" disabled={busy || stake <= 0 || stake > liquidCash(state.player)} onClick={() => void act({ type: "gamble", game: "slots", stake })}>
             Slots
           </Btn>
-          <Btn kind="ghost" disabled={busy} onClick={() => void act({ type: "gamble", game: "lottery", stake })}>
+          <Btn kind="ghost" disabled={busy || stake <= 0 || stake > liquidCash(state.player)} onClick={() => void act({ type: "gamble", game: "lottery", stake })}>
             Lottery
           </Btn>
         </div>
         <div className="mt-4">
-          <Label>Mines · 5×5 · 5 mines</Label>
-          <p className="text-xs text-[var(--muted)]">Each safe tile raises the multiplier. Hit a mine, stake is gone. Cash-out is the modelled fair multi minus 3% house.</p>
-          <Field label="Picks before cashout">
-            <Input type="number" min={1} max={20} value={picks} onChange={(e) => setPicks(Number(e.target.value))} />
-          </Field>
-          <div className="mt-2">
-            <Btn kind="teal" onClick={() => void act({ type: "gamble", game: "mines", stake, extra: { mines: 5, picks } })}>
-              Run mines
-            </Btn>
-          </div>
+          <MinesGame state={state} act={act} busy={busy} />
         </div>
         <p className="mt-3 text-xs text-[var(--muted)]">
           Wagered {formatINR(g.lifetimeWagered)} · won {formatINR(g.lifetimeWon)} · lost {formatINR(g.lifetimeLost)}
