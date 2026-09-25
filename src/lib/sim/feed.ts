@@ -41,7 +41,7 @@ export function timeline(state: GameState, text: string, kind: string) {
       text,
       kind,
     },
-    240,
+    600,
   );
 }
 

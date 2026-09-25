@@ -10,6 +10,7 @@
 //      overwrite fresher progress (that is how a balance used to "roll back").
 import { applyAction } from "@/lib/sim/actions";
 import { createGame } from "@/lib/sim/create";
+import { getCasino } from "@/lib/sim/casino";
 import { computeNetWorth, repairFinances } from "@/lib/sim/finance";
 import type { ActionResult, GameState, NewGameInput, PlayerAction } from "@/lib/sim/types";
 import { monthName, uid } from "@/lib/sim/util";
@@ -158,6 +159,7 @@ export function migrate(state: GameState): GameState {
   if (!Array.isArray(f.accounts)) f.accounts = [];
   if (!Array.isArray(f.loans)) f.loans = [];
   repairFinances(state);
+  if (state.world && state.time) getCasino(state); // also backfills the life layer
   return state;
 }
 

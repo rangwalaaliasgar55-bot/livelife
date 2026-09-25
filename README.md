@@ -41,7 +41,8 @@ npm run start      # serve it
 | `npm run sim-test` | End-to-end simulation smoke test (deterministic seeds, 10-year soak) |
 | `npm run money-test` | Money audit: every known way a balance used to be destroyed, asserted fixed |
 | `npm run ui-test` | Renders every panel and the new game surfaces to markup (no blank screens) |
-| `npm test` | typecheck + lint + all three suites |
+| `npm run life-test` | Life layer: whole lives aged up, events & consequences, prison, death → heir, casino house edges, aircraft economy, takeovers, admin x-ray |
+| `npm test` | typecheck + lint + all four suites |
 | `npm run apk` | Static web build (`out/`) + Capacitor sync for Android |
 
 ---
@@ -69,6 +70,53 @@ merely mirrors saves for multi-device sync.
 - Education tracks, 28 skills, careers with promotion/layoff risk, freelancing, health/energy/stress, family, children, **multi-generation
   dynasties with heirs**
 - Personality traits that measurably affect outcomes
+
+### My Life — the BitLife layer (`life.ts`, `lifeevents.ts`)
+- **+ Age** lives until your next birthday (header button and the My Life screen). Life events interrupt the year and make you choose;
+  the story screen is your timeline grouped by age.
+- **New stats**: Smarts, Looks, Karma, Fame alongside Health, Happiness and Stress. Health heals toward an age-dependent baseline;
+  untreated illness, drinking and poverty drag it down. Mortality is real and rises steeply with age and poor health.
+- **Relationships**: parents, siblings, partner/fiancé(e)/spouse, children, friends, exes and enemies — each with a bond bar that decays
+  when neglected. Spend time, talk, gift, date, ask for money, argue, insult, propose (ring cost), marry (simple/grand/elope, optional
+  prenup), try for a baby, break up, divorce (prenup protects you; no prenup costs up to half your liquid wealth). Dating app, going out,
+  office romance; pets and adoption. Parents die and leave inheritances.
+- **36 life events with real consequences** — a lost wallet, a friend who needs a loan, a boss asking you to "reclassify" losses, a
+  can't-lose investment, the baby question, a flirtation at work, a midlife crisis, a tax audit, being pulled over without a licence…
+  Many choices schedule **delayed consequences** that land months or years later: the loan is repaid — or not; the scheme pays out, then
+  collapses; the cooked books are exposed; an affair is discovered; an insider tip draws a regulator's probe.
+- **Activities** with diminishing returns within a year: gym, library, meditation, martial arts, spa, volunteering, night club, parties,
+  charity, doctor, therapy, rehab, plastic surgery, driver's/boating/pilot licences, skydiving, street racing.
+- **Prison**: convictions (from the underground and from life events) can mean a sentence. You lose your job; travel, business moves and
+  the casino are closed; prison activities include the library, workouts, an appeal, a riot or an escape attempt. Good behaviour means
+  early parole. Your record follows you.
+- **Death & heirs**: when a life ends, a successor continues with the relationship web rebuilt from their point of view.
+
+### Casino floor (`casino.ts`)
+Eight games, all played move by move from the save's own RNG stream (nothing re-rolls on refresh), with odds and house edge on screen:
+**Blackjack** (6-deck shoe, S17, 3:2, double, basic-strategy hint) · **Roulette** (single zero, full chip table, animated wheel) ·
+**Slots** (3 reels, 95.7% RTP) · **Crash** (live multiplier curve, manual or auto cash-out, 3% edge) · **Hi-Lo** (chain calls, skip,
+cash out) · **Dice** (pick your odds, 1% edge) · **Plinko** (12 rows, low/medium/high risk, 97% RTP) · **Mines**. Gambling builds a
+habit that costs stress and relationships; rehab clears it.
+
+### Jets, cars & travel (`lifestyle.ts`)
+- **Aircraft** from a Skylark trainer to a wide-body airliner. Fly it yourself (pilot licence, single-pilot types) or retain a crew. Put
+  it on the **charter** market (income per flight hour, driven by the economy, tourism and condition, minus crew/fuel/maintenance) or
+  **dry-lease** it to an airline for fixed monthly rent (lessees can default in downturns). Depreciation, maintenance checks and
+  groundings are real. **Fly to any city** on the map — it relocates you.
+- **Cars, bikes and yachts**: happiness, looks and fame boosts, depreciation (hypercars appreciate), upkeep; charter yachts out.
+- **Vacations**: pick a destination on the map, a style (backpacker → ultra) and a length; fly commercial or take your own jet. Trips
+  lower stress, can bring a holiday romance, food poisoning, a pickpocket or a useful contact. Countries visited are tracked.
+
+### Stakes & takeovers (`corporate.ts`)
+Launch a **tender offer** for any company — personally or through a company you control. Pick the stake and premium; acceptance depends
+on premium, sentiment, the company's condition and your negotiation skill. 10% buys a board seat, >50% buys **control** (the firm joins
+your group). Low-ball hostile bids for big stakes can trigger a **poison pill** that dilutes you. Stakes pay dividends; block sales go at
+a discount; stakes held by your companies count in net worth.
+
+### Owner x-ray (secret)
+With the treasury unlocked, the **Casino x-ray** toggle (in the treasury, or triple-tap the Mines title) faintly marks every mine on the
+Mines board and shows the crash point, the dealer's hole card and the next card in Blackjack/Hi-Lo. It is invisible to normal players and
+switches off when the treasury is locked.
 
 ### The money rules (invariants, all asserted by `npm run money-test`)
 - **A payment you cannot cover moves nothing.** An unaffordable bet, tuition, instalment or retainer is refused — the old behaviour drained
@@ -156,13 +204,19 @@ src/lib/sim/          # the simulation — pure TypeScript, no UI, no server
                       # year reviews, stats, ledger, calendar, analysis, biographies,
                       # cash-flow report
   mines.ts            # the Mines round: seeded board, fair multipliers, odds
+  life.ts             # BitLife layer: stats, people, activities, prison, mortality, heirs
+  lifeevents.ts       # life events with choices + delayed consequences
+  casino.ts           # blackjack, roulette, slots, crash, hi-lo, dice, plinko
+  lifestyle.ts        # cars, yachts, aircraft (charter/lease/fly), vacations
+  corporate.ts        # stakes, tender offers, control, poison pills
   debug.ts            # hidden developer tools + the owner treasury (gated)
 src/lib/store.ts      # client-first persistence: localStorage + optional server mirror
                       # (newer-copy-wins, save repair, sync status)
 src/lib/persist.ts    # server persistence: Postgres (drizzle) or file store fallback
 src/lib/filestore.ts  # write-aware file store: SAVE_DIR → .saves → tmp → memory
-src/components/game/  # the UI (panels, overlays, Mines board, app shell)
-scripts/              # static export build + the three test suites
+src/components/game/  # the UI (panels, overlays, Mines board, My Life, Casino floor,
+                      # Jets/Cars/Travel, Stakes & Takeovers, app shell)
+scripts/              # static export build + the four test suites
 android/              # Capacitor Android project
 ```
 

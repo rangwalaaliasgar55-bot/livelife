@@ -669,6 +669,16 @@ export const FREELANCE_GIGS: { industry: Industry; title: string }[] = [
 ];
 
 export const ACHIEVEMENTS: { id: string; name: string; desc: string }[] = [
+  { id: "married", name: "Tied the Knot", desc: "Get married." },
+  { id: "parent", name: "Parenthood", desc: "Have or adopt a child." },
+  { id: "centenarian", name: "Centenarian", desc: "Live to 100." },
+  { id: "pilot", name: "Licensed to Fly", desc: "Earn a pilot licence." },
+  { id: "wings", name: "Wings", desc: "Buy your first aircraft." },
+  { id: "fleet", name: "Fleet Owner", desc: "Own five aircraft at once." },
+  { id: "yacht", name: "Sea Legs", desc: "Buy a yacht." },
+  { id: "petrolhead", name: "Petrolhead", desc: "Buy a supercar or hypercar." },
+  { id: "globetrotter", name: "Globetrotter", desc: "Visit every country on the map." },
+  { id: "takeover", name: "Corporate Raider", desc: "Take control of a company through a tender offer." },
   { id: "cash_10k", name: "First ₹10,000", desc: "Hold ₹10,000 cash." },
   { id: "cash_1l", name: "First ₹1 Lakh", desc: "Hold ₹1 lakh cash." },
   { id: "cash_1cr", name: "First ₹1 Crore", desc: "Reach ₹1 crore net worth." },

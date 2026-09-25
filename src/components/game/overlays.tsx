@@ -164,6 +164,20 @@ export function TreasuryModal({ state, act, onClose }: { state: GameState; act: 
               <Btn onClick={() => act({ type: "admin", op: "draw", amount })}>Draw</Btn>
             </div>
           </div>
+          <div className="mt-5 rounded-2xl border border-rose-300/20 bg-rose-500/5 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="tick">Casino x-ray · owner only</p>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Secretly see where the mines are on the Mines board, the crash point, the dealer&apos;s hole card and the next card in
+                  Blackjack and Hi-Lo. Players never see this. Shortcut: triple-tap the Mines title.
+                </p>
+              </div>
+              <Btn kind={admin.xray ? "danger" : "ghost"} onClick={() => act({ type: "admin", op: "xray" })}>
+                {admin.xray ? "X-ray ON" : "X-ray off"}
+              </Btn>
+            </div>
+          </div>
           <div className="mt-4">
             <Btn kind="ghost" onClick={() => act({ type: "admin", op: "lock" })}>
               Lock the treasury

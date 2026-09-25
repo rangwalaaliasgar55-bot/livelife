@@ -52,9 +52,34 @@ export function propertyValue(p: Player): number {
   return p.properties.reduce((s, x) => s + money(x.value), 0);
 }
 
+/** Cars, yachts and aircraft at their current (depreciated) value. */
+export function lifestyleAssets(state: GameState): number {
+  const L = state.life;
+  if (!L) return 0;
+  return (L.vehicles ?? []).reduce((s, v) => s + money(v.value), 0) + (L.aircraft ?? []).reduce((s, a) => s + money(a.value), 0);
+}
+
+/** Stakes held by companies you control, at your share of the holder. */
+export function groupStakes(state: GameState): number {
+  const owned = new Set(state.player.ownedCompanyIds);
+  if (!owned.size) return 0;
+  let v = 0;
+  for (const co of state.world.companies) {
+    if (co.shares <= 0) continue;
+    for (const s of co.shareholders) {
+      if (s.type === "player" || !owned.has(s.id) || s.id === co.id) continue;
+      const holder = state.world.companies.find((c) => c.id === s.id);
+      const mine = holder?.shareholders.find((x) => x.type === "player");
+      if (!holder || !mine || holder.shares <= 0) continue;
+      v += (money(s.shares) / co.shares) * Math.max(0, money(co.valuation)) * (money(mine.shares) / holder.shares);
+    }
+  }
+  return v;
+}
+
 export function computeNetWorth(state: GameState): number {
   const p = state.player;
-  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) - totalDebt(p);
+  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) + lifestyleAssets(state) + groupStakes(state) - totalDebt(p);
 }
 
 export function recordNetWorth(state: GameState) {

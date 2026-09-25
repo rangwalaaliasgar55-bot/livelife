@@ -191,6 +191,11 @@ export function isAdmin(state: GameState): boolean {
   return Boolean(state.adv?.admin?.unlocked);
 }
 
+/** Owner-only casino x-ray is on. */
+export function xrayOn(state: GameState): boolean {
+  return Boolean(state.adv?.admin?.unlocked && state.adv.admin.xray);
+}
+
 export function adminOp(state: GameState, op: string, key?: string, amount?: number): string {
   const adv = state.adv;
   if (!adv) return "No state.";
@@ -211,9 +216,16 @@ export function adminOp(state: GameState, op: string, key?: string, amount?: num
       note(state, "Treasury unlocked. Draws are recorded in the ledger.", "good");
       return "Treasury unlocked. You can now draw funds.";
     }
+    case "xray":
+      if (!adv.admin.unlocked) return "Treasury locked — unlock it first.";
+      adv.admin.xray = !adv.admin.xray;
+      return adv.admin.xray
+        ? "Casino x-ray ON. Mine positions, crash points, the dealer's hole card and the next card are visible only to you."
+        : "Casino x-ray OFF.";
     case "lock":
       if (!adv.admin.unlocked) return "Treasury is already locked.";
       adv.admin.unlocked = false;
+      adv.admin.xray = false;
       note(state, "Treasury locked.", "info");
       return "Treasury locked.";
     case "draw": {

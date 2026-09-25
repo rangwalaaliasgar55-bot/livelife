@@ -11,6 +11,10 @@ import { formatINR, formatPct } from "@/lib/sim/util";
 import { Btn, Card, Delta, Field, Input, Label, Meter, Money, Select, Spark, Table } from "./ui";
 import { Analysis, CalendarP, CashFlow, Research, Staff, StatsP } from "./panels2";
 import { MinesGame } from "./MinesGame";
+import { LifeView } from "./LifeView";
+import { CasinoFloor } from "./CasinoFloor";
+import { LifestyleView } from "./LifestyleView";
+import { CorporatePanel } from "./CorporatePanel";
 
 export function Panels({
   view,
@@ -23,6 +27,10 @@ export function Panels({
   act: (a: PlayerAction) => Promise<void> | void;
   busy: boolean;
 }) {
+  if (view === "mylife") return <LifeView state={state} act={act} busy={busy} />;
+  if (view === "casino") return <CasinoFloor state={state} act={act} busy={busy} />;
+  if (view === "lifestyle") return <LifestyleView state={state} act={act} busy={busy} />;
+  if (view === "takeovers") return <CorporatePanel state={state} act={act} busy={busy} />;
   if (view === "staff") return <Staff state={state} act={act} />;
   if (view === "cashflow") return <CashFlow state={state} act={act} />;
   if (view === "analysis") return <Analysis state={state} />;
@@ -1135,6 +1143,9 @@ function Under({ state, act, busy }: { state: GameState; act: (a: PlayerAction) 
         </div>
         <div className="mt-4">
           <MinesGame state={state} act={act} busy={busy} />
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            Blackjack, roulette, slots, crash, hi-lo, dice and plinko are on the Casino floor (World → Casino).
+          </p>
         </div>
         <p className="mt-3 text-xs text-[var(--muted)]">
           Wagered {formatINR(g.lifetimeWagered)} · won {formatINR(g.lifetimeWon)} · lost {formatINR(g.lifetimeLost)}

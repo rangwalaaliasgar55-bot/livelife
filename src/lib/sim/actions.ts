@@ -5,6 +5,46 @@ import { history, news, note, rng, tickMonths, timeline, unlock } from "./engine
 import { computeNetWorth, credit, liquidCash, money, monthlyLoanPayment, spend } from "./finance";
 import { MINES_PRESETS, MINES_TILES, minesLayout, minesView, newMinesSession } from "./mines";
 import { adminOp } from "./debug";
+import { ACTIVITIES, addChild, adoptChild, adoptPet, askOut, doActivity, findLove, getLife, inheritLife, inPrison, interact, monthsToBirthday, sentence } from "./life";
+import { resolveLifeEvent } from "./lifeevents";
+import {
+  buyAircraft,
+  buyVehicle,
+  flyAircraft,
+  maintainAircraft,
+  repairVehicle,
+  sellAircraft,
+  sellVehicle,
+  setAircraftCrew,
+  setAircraftMode,
+  takeVacation,
+  toggleYachtCharter,
+} from "./lifestyle";
+import { sellStake, tenderOffer } from "./corporate";
+import {
+  bjDouble,
+  bjHit,
+  bjStand,
+  bjStart,
+  crashCashout,
+  crashStart,
+  diceRoll,
+  getCasino,
+  hiloCashout,
+  hiloGuess,
+  hiloStart,
+  plinkoDrop,
+  rouletteSpin,
+  slotSpin,
+} from "./casino";
+
+/** Things you simply cannot do from a cell. */
+const PRISON_BLOCKED = new Set<string>([
+  "study", "course", "applyJob", "freelance", "travel", "buyProperty", "foundCompany", "buyCompany", "gamble", "minesStart",
+  "foundCasino", "foundBank", "foundInsurer", "foundMedia", "campaign", "runForOffice", "createParty", "haveChild", "workout",
+  "network", "buyVehicle", "buyAircraft", "flyAircraft", "vacation", "findLove", "askOut", "adoptPet", "adoptChild",
+  "bjStart", "rouletteSpin", "slotSpin", "crashStart", "diceRoll", "hiloStart", "plinkoDrop", "crimeAct", "applyResidency", "applyCitizenship",
+]);
 import type {
   Loan,
   EducationTrack,
@@ -23,8 +63,129 @@ export function applyAction(state: GameState, action: PlayerAction): { state: Ga
   // Anti-exploit guard (spec 163): every numeric field must be finite and sane.
   const bad = Object.values(action).some((v) => typeof v === "number" && !Number.isFinite(v));
   if (bad) return { state, log, error: "Invalid numbers in action." };
+  getCasino(state); // make sure the life layer exists on older saves
+  if (PRISON_BLOCKED.has(action.type) && inPrison(state)) {
+    const pr = getLife(state).prison!;
+    return { state, log: [`You're serving time in ${pr.facility} (${pr.monthsLeft} months left). Try the prison activities — or age up.`] };
+  }
   try {
     switch (action.type) {
+      case "ageUp": {
+        if (!state.player.alive) {
+          log.push("This life has ended.");
+          break;
+        }
+        const before = state.player.age;
+        const m = monthsToBirthday(state);
+        tickMonths(state, m);
+        const p = state.player;
+        log.push(p.age > before ? `You are now ${p.age}.` : `Something happened at ${p.age} — decide, then age up again to continue.`);
+        break;
+      }
+      case "activity":
+        doActivity(state, action.id, log);
+        void ACTIVITIES;
+        break;
+      case "interact":
+        interact(state, action.personId, action.kind, log, { prenup: action.prenup, wedding: action.wedding });
+        break;
+      case "findLove":
+        findLove(state, action.where, log);
+        break;
+      case "askOut":
+        askOut(state, action.candidateId, log);
+        break;
+      case "adoptPet":
+        adoptPet(state, action.species, log);
+        break;
+      case "adoptChild":
+        adoptChild(state, log);
+        break;
+      case "buyVehicle":
+        buyVehicle(state, action.modelId, log);
+        break;
+      case "sellVehicle":
+        sellVehicle(state, action.id, log);
+        break;
+      case "repairVehicle":
+        repairVehicle(state, action.id, log);
+        break;
+      case "yachtCharter":
+        toggleYachtCharter(state, action.id, log);
+        break;
+      case "buyAircraft":
+        buyAircraft(state, action.modelId, log);
+        break;
+      case "sellAircraft":
+        sellAircraft(state, action.id, log);
+        break;
+      case "aircraftMode":
+        setAircraftMode(state, action.id, action.mode, log);
+        break;
+      case "aircraftCrew":
+        setAircraftCrew(state, action.id, action.crew, log);
+        break;
+      case "maintainAircraft":
+        maintainAircraft(state, action.id, log);
+        break;
+      case "flyAircraft":
+        flyAircraft(state, action.id, action.cityId, log);
+        break;
+      case "vacation":
+        takeVacation(state, action.cityId, action.tier, action.days, action.aircraftId, log);
+        break;
+      case "tenderOffer":
+        tenderOffer(state, action.companyId, action.pct, action.premium, action.buyer, log);
+        break;
+      case "sellStake":
+        sellStake(state, action.companyId, action.holderId, action.pct, log);
+        break;
+      case "bjStart":
+        bjStart(state, action.stake, log);
+        break;
+      case "bjHit":
+        bjHit(state, log);
+        break;
+      case "bjStand":
+        bjStand(state, log);
+        break;
+      case "bjDouble":
+        bjDouble(state, log);
+        break;
+      case "rouletteSpin":
+        rouletteSpin(state, action.bets, log);
+        break;
+      case "slotSpin":
+        slotSpin(state, action.stake, log);
+        break;
+      case "crashStart":
+        crashStart(state, action.stake, action.auto, log);
+        break;
+      case "crashCashout":
+        crashCashout(state, action.at, log);
+        break;
+      case "diceRoll":
+        diceRoll(state, action.stake, action.target, action.over, log);
+        break;
+      case "hiloStart":
+        hiloStart(state, action.stake, log);
+        break;
+      case "hiloGuess":
+        hiloGuess(state, action.guess, log);
+        break;
+      case "hiloCashout":
+        hiloCashout(state, log);
+        break;
+      case "plinkoDrop":
+        plinkoDrop(state, action.stake, action.risk, log);
+        break;
+      case "casinoClear": {
+        const c = getCasino(state);
+        if (action.game === "bj" && c.bj?.status !== "live") c.bj = null;
+        if (action.game === "crash" && c.crash?.status !== "live") c.crash = null;
+        if (action.game === "hilo" && c.hilo?.status !== "live") c.hilo = null;
+        break;
+      }
       case "tick":
         tickMonths(state, action.months ?? 1);
         log.push(`Lived ${action.months ?? 1} month(s).`);
@@ -1800,18 +1961,7 @@ function haveChild(state: GameState, log: string[]) {
     log.push("Not yet.");
     return;
   }
-  const child = {
-    id: uid("fam"),
-    name: `${pick(rng.bind(null, state), ["Ayaan", "Ira", "Noor", "Leo", "Zara", "Dev"])} ${state.player.name.split(" ").slice(-1)[0]}`,
-    relation: "child" as const,
-    age: 0,
-    alive: true,
-    wealth: 0,
-    countryId: state.player.countryId,
-  };
-  state.player.family.members.push(child);
-  if (!state.player.family.willHeirId) state.player.family.willHeirId = child.id;
-  timeline(state, `${child.name} was born.`, "family");
+  const child = addChild(state);
   log.push(`${child.name} joins the family.`);
 }
 
@@ -1822,6 +1972,7 @@ function continueAsHeir(state: GameState, log: string[]) {
     return;
   }
   const old = state.player.name;
+  inheritLife(state, heir.id, old);
   state.player.name = heir.name;
   state.player.age = Math.max(18, heir.age);
   state.player.alive = true;
@@ -1872,6 +2023,10 @@ function resolveDecision(state: GameState, decisionId: string, optionId: string,
   const d = state.pending.find((x) => x.id === decisionId);
   if (!d) return;
   state.pending = state.pending.filter((x) => x.id !== decisionId);
+  if (d.kind === "life") {
+    resolveLifeEvent(state, d, optionId, log);
+    return;
+  }
   if (d.kind === "investor") {
     const co = state.world.companies.find((c) => c.id === d.context.companyId);
     if (!co) return;
@@ -1935,13 +2090,28 @@ function resolveDecision(state: GameState, decisionId: string, optionId: string,
         state.player.crime.heat *= 0.5;
       } else {
         state.player.crime.convictions += 1;
-        log.push("Fined. Record stained.");
-        spend(state.player, 80000, "Fine", "legal", date(state));
+        const c = state.player.crime;
+        // Serious heat and evidence mean prison, not just a fine.
+        if (chance(rng.bind(null, state), clamp(0.15 + c.evidence / 150 + c.convictions * 0.1, 0.1, 0.85))) {
+          const months = Math.round(clamp(6 + c.evidence * 0.6 + c.convictions * 12 + rng(state) * 18, 6, 180));
+          sentence(state, months, state.player.crime.moneyFromCrime > 5e6 ? "organised crime" : "underground dealings");
+          c.heat = 0;
+          c.evidence *= 0.3;
+          log.push(`Convicted. Sentenced to ${months >= 12 ? `${(months / 12).toFixed(1)} years` : `${months} months`} in prison.`);
+        } else {
+          log.push("Convicted, but spared prison: fined. Record stained.");
+          spend(state.player, 80000, "Fine", "legal", date(state));
+          getLife(state).record.push(`Underground offences — fined (${state.time.year})`);
+        }
       }
     } else {
       state.player.crime.heat *= 0.7;
       state.player.reputation.personal -= 4;
-      log.push("You cooperated. Heat down, reputation down.");
+      if (chance(rng.bind(null, state), clamp(state.player.crime.evidence / 200, 0, 0.4))) {
+        const months = Math.round(clamp(4 + state.player.crime.evidence * 0.3, 4, 60));
+        sentence(state, months, "underground dealings (plea deal)");
+        log.push(`You cooperated and took a plea deal: ${months} months.`);
+      } else log.push("You cooperated. Heat down, reputation down.");
     }
   } else if (d.kind === "death") {
     if (optionId === "heir") continueAsHeir(state, log);

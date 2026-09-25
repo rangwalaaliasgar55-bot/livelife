@@ -14,6 +14,10 @@ import {
   totalDebt,
 } from "./finance";
 import { news, note, timeline, history, unlock } from "./feed";
+import { inPrison, tickLife } from "./life";
+import { maybeLifeEvent, tickConsequences } from "./lifeevents";
+import { tickLifestyle } from "./lifestyle";
+import { tickStakes } from "./corporate";
 import type {
   Country,
   Decision,
@@ -48,7 +52,8 @@ function tickOnce(state: GameState) {
     yearBoundary(state);
   }
   const p = state.player;
-  if (state.time.month === p.birthMonth) {
+  const birthday = state.time.month === p.birthMonth;
+  if (birthday) {
     p.age += 1;
     timeline(state, `Turned ${p.age}.`, "life");
     if (p.age >= 75) {
@@ -70,8 +75,13 @@ function tickOnce(state: GameState) {
   tickSocial(state);
   tickCasinos(state);
   tickHealth(state);
+  tickLife(state, birthday);
+  tickLifestyle(state);
+  tickStakes(state);
+  tickConsequences(state);
   tickNpcs(state);
-  maybeEvents(state);
+  if (!inPrison(state)) maybeEvents(state);
+  maybeLifeEvent(state, birthday);
   refreshOpportunities(state);
   checkAchievements(state);
   recordNetWorth(state);
