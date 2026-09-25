@@ -1,17 +1,19 @@
 // Hidden developer tools (spec 189). Gated behind state.adv.debug, which the
 // UI can only flip through the secret gesture. These mutate the authoritative
 // state the same way any other system does — they never bypass validation.
-import { note } from "./feed";
+import { history, note, timeline } from "./feed";
 import { tickMonths } from "./engine";
+import { ledger } from "./advanced";
+import { credit, money } from "./finance";
 import type { GameState } from "./types";
-import { clamp, formatDate, jitter, uid } from "./util";
+import { clamp, formatDate, formatINR, jitter, uid } from "./util";
 
 export function devOp(state: GameState, op: string, a: Record<string, number | string> = {}): string {
   if (op === "toggle") {
     // toggle is the only way in — always allowed
     if (!state.adv) return "No state.";
     state.adv.debug = !state.adv.debug;
-    return state.adv.debug ? "Dev mode ON." : "Dev mode OFF.";
+    return state.adv.debug ? "Dev mode ON. The treasury is reachable from the secret spot." : "Dev mode OFF.";
   }
   if (!state.adv?.debug) return "Dev mode is disabled. Flip the switch below first.";
   const rng = () => Math.random();
@@ -173,6 +175,71 @@ export function devOp(state: GameState, op: string, a: Record<string, number | s
     default:
       return `Unknown dev op: ${op}`;
   }
+}
+
+/* ------------------------------------------------- secret admin treasury */
+
+// The treasury is the "admin only" pocket: a hidden spot in the app that, once
+// unlocked with the admin key, can credit the wallet on demand. Every draw is
+// posted to the ledger, the timeline and the lifetime stats, so an admin draw
+// is always traceable inside the save — it is never silent money.
+export const ADMIN_KEY = String(process.env.NEXT_PUBLIC_ADMIN_KEY ?? "aurelion-admin")
+  .trim()
+  .toLowerCase();
+
+export function isAdmin(state: GameState): boolean {
+  return Boolean(state.adv?.admin?.unlocked);
+}
+
+export function adminOp(state: GameState, op: string, key?: string, amount?: number): string {
+  const adv = state.adv;
+  if (!adv) return "No state.";
+  if (!adv.admin) adv.admin = { unlocked: false, draws: 0, totalDrawn: 0 };
+  const date = formatDate(state.time.year, state.time.month);
+  switch (op) {
+    case "status":
+      return adv.admin.unlocked
+        ? `Treasury unlocked · ${adv.admin.draws} draws · ${formatINR(adv.admin.totalDrawn)} total.`
+        : "Treasury locked. Enter the admin key.";
+    case "unlock": {
+      const given = String(key ?? "").trim().toLowerCase();
+      // Dev mode (the 5-tap logo gesture) also counts as proof of ownership.
+      if (given !== ADMIN_KEY && !adv.debug) return "Wrong key. The treasury stays locked.";
+      if (adv.admin.unlocked) return "Treasury already unlocked.";
+      adv.admin.unlocked = true;
+      timeline(state, "Admin access granted to the treasury.", "finance");
+      note(state, "Treasury unlocked. Draws are recorded in the ledger.", "good");
+      return "Treasury unlocked. You can now draw funds.";
+    }
+    case "lock":
+      if (!adv.admin.unlocked) return "Treasury is already locked.";
+      adv.admin.unlocked = false;
+      note(state, "Treasury locked.", "info");
+      return "Treasury locked.";
+    case "draw": {
+      if (!adv.admin.unlocked) return "Treasury locked — unlock it first.";
+      const amt = Math.round(clamp(money(amount ?? 1_000_000), 1, 1e12));
+      credit(state.player, amt, "Treasury draw (admin)", "admin", date);
+      adv.admin.draws += 1;
+      adv.admin.totalDrawn = round2(adv.admin.totalDrawn + amt);
+      adv.admin.lastDraw = date;
+      ledger(state, `Treasury draw (admin) · ${adv.admin.draws}${ord(adv.admin.draws)} draw`, amt);
+      note(state, `Treasury draw: ${formatINR(amt)} credited to the wallet.`, "good");
+      history(state, "finance", `Admin treasury draw ${formatINR(amt)}`);
+      return `+${formatINR(amt)} from the treasury. Wallet ${formatINR(state.player.finances.cash)}.`;
+    }
+    default:
+      return `Unknown admin op: ${op}`;
+  }
+}
+
+function round2(n: number) {
+  return Math.round(money(n) * 100) / 100;
+}
+function ord(n: number) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
 }
 
 export function devOpsList(): { op: string; label: string; args?: string[] }[] {

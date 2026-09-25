@@ -5,7 +5,7 @@ import { getAdv } from "@/lib/sim/advanced";
 import { applyAction } from "@/lib/sim/actions";
 import { createGame } from "@/lib/sim/create";
 import { computeNetWorth } from "@/lib/sim/finance";
-import { fileDelete, fileGet, fileList, fileUpsert } from "@/lib/filestore";
+import { fileDelete, fileGet, fileList, fileUpsert, storeDurable, storeKind, storeLocation } from "@/lib/filestore";
 import type { GameState, NewGameInput, PlayerAction } from "@/lib/sim/types";
 import { monthName, uid } from "@/lib/sim/util";
 
@@ -38,7 +38,7 @@ function rowFrom(state: GameState, id: string, name: string, createdAt?: Date) {
     playerName: state.player.name,
     year: state.time.year,
     month: state.time.month,
-    netWorth: computeNetWorth(state),
+    netWorth: Math.round(computeNetWorth(state)),
     age: state.player.age,
     country: state.world.countries.find((c) => c.id === state.player.countryId)?.name ?? "",
     summary: summaryLine(state),
@@ -48,11 +48,48 @@ function rowFrom(state: GameState, id: string, name: string, createdAt?: Date) {
   };
 }
 
-export function backendName(): "postgres" | "files" {
-  return dbEnabled && db ? "postgres" : "files";
+export type Backend = "postgres" | "files" | "memory";
+
+export function backendName(): Backend {
+  if (dbEnabled && db) return "postgres";
+  return storeKind() === "files" ? "files" : "memory";
+}
+
+/** Can saves survive a restart? A serverless function with no writable disk
+ *  answers false, and the client then keeps localStorage as the only truth
+ *  instead of trusting a mirror that silently drops writes. */
+export async function persistDurable(): Promise<boolean> {
+  if (dbEnabled && db) {
+    try {
+      await db.select({ one: gameSaves.id }).from(gameSaves).limit(1);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return storeDurable();
+}
+
+export function persistLocation(): string {
+  return dbEnabled && db ? "postgres" : storeLocation();
+}
+
+/** Never let a storage failure escape as a 500: the client treats the server as
+ *  an optional mirror, so a degraded answer beats an exception. */
+async function safe<T>(fn: () => Promise<T>, fallback: T, label: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn(`[persist] ${label} failed:`, e instanceof Error ? e.message : e);
+    return fallback;
+  }
 }
 
 export async function listSaves(): Promise<Meta[]> {
+  return safe(listSavesUnsafe, [], "listSaves");
+}
+
+async function listSavesUnsafe(): Promise<Meta[]> {
   if (dbEnabled && db) {
     const rows = await db.select().from(gameSaves).orderBy(desc(gameSaves.updatedAt));
     return rows.map((r) => ({
@@ -90,7 +127,14 @@ export async function listSaves(): Promise<Meta[]> {
 export async function createSave(input: NewGameInput, slotName?: string) {
   const state = createGame(input);
   const id = uid("life");
-  const name = slotName || `${input.name} · ${input.mode}`;
+  // The client keeps its own copy regardless; a storage failure must not lose
+  // the freshly generated life, so this is best-effort.
+  await safe(() => createSaveRow(id, slotName, state), undefined, "createSave");
+  return { id, state };
+}
+
+async function createSaveRow(id: string, slotName: string | undefined, state: GameState) {
+  const name = slotName || `${state.player.name} · ${state.mode}`;
   const row = rowFrom(state, id, name);
   if (dbEnabled && db) {
     await db.insert(gameSaves).values({
@@ -111,10 +155,13 @@ export async function createSave(input: NewGameInput, slotName?: string) {
   } else {
     await fileUpsert(row);
   }
-  return { id, state };
 }
 
 export async function loadSave(id: string): Promise<GameState | null> {
+  return safe(() => loadSaveUnsafe(id), null, "loadSave");
+}
+
+async function loadSaveUnsafe(id: string): Promise<GameState | null> {
   let state: GameState | null = null;
   if (dbEnabled && db) {
     const rows = await db.select().from(gameSaves).where(eq(gameSaves.id, id)).limit(1);
@@ -128,6 +175,10 @@ export async function loadSave(id: string): Promise<GameState | null> {
 }
 
 export async function persistState(id: string, state: GameState) {
+  await safe(() => persistStateUnsafe(id, state), undefined, "persistState");
+}
+
+async function persistStateUnsafe(id: string, state: GameState) {
   state.lastSave = new Date().toISOString();
   const row = rowFrom(state, id, `${state.player.name} · ${state.mode}`);
   if (dbEnabled && db) {
@@ -152,6 +203,10 @@ export async function persistState(id: string, state: GameState) {
 }
 
 export async function upsertState(id: string, state: GameState, name?: string) {
+  await safe(() => upsertStateUnsafe(id, state, name), undefined, "upsertState");
+}
+
+async function upsertStateUnsafe(id: string, state: GameState, name?: string) {
   const row = rowFrom(state, id, name ?? `${state.player.name} · ${state.mode}`);
   if (dbEnabled && db) {
     const rows = await db.select().from(gameSaves).where(eq(gameSaves.id, id)).limit(1);
@@ -189,14 +244,20 @@ export async function actOnSave(id: string, action: PlayerAction) {
 }
 
 export async function deleteSave(id: string) {
-  if (dbEnabled && db) {
-    await db.delete(gameSaves).where(eq(gameSaves.id, id));
-  } else {
-    await fileDelete(id);
-  }
+  await safe(async () => {
+    if (dbEnabled && db) {
+      await db.delete(gameSaves).where(eq(gameSaves.id, id));
+    } else {
+      await fileDelete(id);
+    }
+  }, undefined, "deleteSave");
 }
 
 export async function duplicateSave(id: string) {
+  return safe(() => duplicateSaveUnsafe(id), null, "duplicateSave");
+}
+
+async function duplicateSaveUnsafe(id: string) {
   const state = await loadSave(id);
   if (!state) return null;
   const nid = uid("life");

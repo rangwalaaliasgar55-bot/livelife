@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildCalendar, CHALLENGE_DEFS, GOAL_DEFS, whyMarket, whyNetWorth } from "@/lib/sim/advanced";
-import { applyLocal, loadLife, persistNow } from "@/lib/store";
+import { applyLocal, loadLife, persistNow, persistenceStatus } from "@/lib/store";
 import type { GameState, PlayerAction } from "@/lib/sim/types";
 import { businessEquity, computeNetWorth, liquidCash, portfolioValue, propertyValue, totalDebt } from "@/lib/sim/finance";
 import { formatDate, formatINR, formatPct, monthName } from "@/lib/sim/util";
 import { Avatar, Btn, Card, Label, Modal, Spark, Stat } from "./ui";
 import { Panels } from "./panels";
-import { DebugModal, HowItWorks, LineListModal, NotifBell, SpeedControls, type Speed } from "./overlays";
+import { DebugModal, HowItWorks, LineListModal, NotifBell, SpeedControls, speedMs, speedMonths, TreasuryModal, type Speed } from "./overlays";
 
 const NAV: { id: string; label: string; group: string }[] = [
   { id: "dashboard", label: "Control", group: "You" },
@@ -25,6 +25,7 @@ const NAV: { id: string; label: string; group: string }[] = [
   { id: "concord", label: "Concord", group: "World" },
   { id: "media", label: "Media & Pulse", group: "World" },
   { id: "under", label: "Underground", group: "World" },
+  { id: "cashflow", label: "Cash Flow", group: "Insight" },
   { id: "analysis", label: "Analysis & Risk", group: "Insight" },
   { id: "research", label: "Research & Forecasts", group: "Insight" },
   { id: "stats", label: "Stats, Goals, Ledger", group: "Insight" },
@@ -50,6 +51,7 @@ const VIEW_HELP: Record<string, string> = {
   concord: "The fictional UN-style body: resolutions, agencies, blocs and votes.",
   media: "Found outlets, post on social platforms, manage your brand and face the press.",
   under: "The fictional gambling economy and the criminal path. Odds are shown; house edge always is.",
+  cashflow: "Where your money actually goes. Every month is broken into named flows — salary, rent, tax, living costs, instalments (interest vs principal), advisors, fees — with a 12-month history, fixed burn, runway and arrears. Commission a cash-flow audit from the Research desk for the diagnosis in words.",
   analysis: "'What should I do?' — your situation, options with cost/risk/upside, plus your balance sheet, exposure and liquidity. It never picks for you.",
   research: "Pay for studies and place market forecasts. Information reduces uncertainty, never guarantees outcomes.",
   stats: "Lifetime statistics, personal & challenge goals, and the transaction ledger that explains every big move.",
@@ -58,24 +60,52 @@ const VIEW_HELP: Record<string, string> = {
   legacy: "Timeline, achievements, year-end reviews, biography export, save export/import and delete.",
 };
 
+const SPEED_VALUES: Speed[] = [0, 0.25, 0.5, 1, 2, 5, 12];
+const SPEED_KEY = "aurelion.speed.v1";
+
+function readSpeed(): Speed {
+  if (typeof window === "undefined") return 0;
+  try {
+    const v = Number(window.localStorage.getItem(SPEED_KEY));
+    return SPEED_VALUES.includes(v as Speed) ? (v as Speed) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function GameApp({ id }: { id: string }) {
   const [state, setState] = useState<GameState | null>(null);
   const [view, setView] = useState("dashboard");
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [speed, setSpeed] = useState<Speed>(0);
+  // Time is the player's to control, and the choice survives a reload. The
+  // default is paused — nothing runs away from you.
+  const [speed, setSpeed] = useState<Speed>(() => readSpeed());
+  const [treasuryOpen, setTreasuryOpen] = useState(false);
+  const [syncInfo, setSyncInfo] = useState(persistenceStatus());
   const [whyOpen, setWhyOpen] = useState<null | "nw" | "market">(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileGroup, setMobileGroup] = useState<string | null>(null);
   const [reviewSeenYear, setReviewSeenYear] = useState<number | null>(null);
   const tapRef = useRef<number[]>([]);
+  const secretRef = useRef<number[]>([]);
+  const busyRef = useRef(false);
   const stateRef = useRef<GameState | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  const chooseSpeed = useCallback((v: Speed) => {
+    setSpeed(v);
+    try {
+      window.localStorage.setItem(SPEED_KEY, String(v));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Initial load of the save (local-first, server fallback).
   useEffect(() => {
@@ -94,6 +124,7 @@ export function GameApp({ id }: { id: string }) {
     (action: PlayerAction) => {
       const cur = stateRef.current;
       if (!cur) return;
+      busyRef.current = true;
       setBusy(true);
       setErr(null);
       try {
@@ -101,10 +132,12 @@ export function GameApp({ id }: { id: string }) {
         setState(result.state);
         persistNow(id, result.state);
         setLog(result.log ?? []);
+        setSyncInfo(persistenceStatus());
         if (result.error) setErr(result.error);
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Action failed");
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
@@ -113,17 +146,20 @@ export function GameApp({ id }: { id: string }) {
 
   const nw = useMemo(() => (state ? computeNetWorth(state) : 0), [state]);
 
-  // auto-tick
+  // auto-tick — the interval is stable across actions (busy lives in a ref, so
+  // the timer is not torn down and restarted on every single move, which used to
+  // make the clock drift and feel out of control).
   useEffect(() => {
-    if (speed === 0) return;
-    const ms = speed === 1 ? 4200 : speed === 2 ? 2100 : speed === 5 ? 900 : 9000;
+    const ms = speedMs(speed);
+    if (!ms) return;
+    const months = speedMonths(speed);
     const t = setInterval(() => {
       const cur = stateRef.current;
-      if (!cur || cur.pending.length || !cur.player.alive || busy) return;
-      act({ type: "tick", months: speed === 10 ? 12 : 1 });
+      if (!cur || cur.pending.length || !cur.player.alive || busyRef.current) return;
+      act({ type: "tick", months });
     }, ms);
     return () => clearInterval(t);
-  }, [speed, busy, act]);
+  }, [speed, act]);
 
   // year-end review: show once, in January of the following year
   const review = state?.adv?.yearReview ?? null;
@@ -148,6 +184,17 @@ export function GameApp({ id }: { id: string }) {
     if (tapRef.current.length >= 5) {
       tapRef.current = [];
       setDebugOpen(true);
+    }
+  }
+
+  // The unmarked spot: three quick clicks on the save stamp (desktop sidebar) or
+  // on the "Net worth" caption (any screen) opens the owner's treasury.
+  function onSecretTap() {
+    const now = Date.now();
+    secretRef.current = [...secretRef.current.filter((t) => now - t < 1400), now];
+    if (secretRef.current.length >= 3) {
+      secretRef.current = [];
+      setTreasuryOpen(true);
     }
   }
 
@@ -177,7 +224,13 @@ export function GameApp({ id }: { id: string }) {
           ))}
         </nav>
         <div className="mt-3 text-xs text-[var(--muted)]">
-          Saved {state.lastSave ? new Date(state.lastSave).toLocaleTimeString() : "—"} · seed {state.seedLabel ?? "—"}
+          <button onClick={onSecretTap} className="block w-full text-left hover:text-[var(--muted)]" title="Saved">
+            Saved {state.lastSave ? new Date(state.lastSave).toLocaleTimeString() : "—"} · seed {state.seedLabel ?? "—"}
+          </button>
+          <p className="mt-1 text-[10px] opacity-70">{syncInfo.message || "Local save"}</p>
+          {p.finances.arrears > 0 ? (
+            <p className="mt-1 text-[10px] text-rose-300">Unpaid living costs {formatINR(p.finances.arrears)}</p>
+          ) : null}
         </div>
       </aside>
 
@@ -200,19 +253,19 @@ export function GameApp({ id }: { id: string }) {
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <p className="tick">Net worth</p>
+              <button onClick={onSecretTap} className="tick block w-full cursor-default select-none text-right" title="Net worth">
+                Net worth
+              </button>
               <button onClick={() => setWhyOpen("nw")} className="gold-text font-serif text-lg md:text-xl hover:underline" title="Why this number?">
                 {formatINR(nw)} <span className="text-xs opacity-70">?why</span>
               </button>
             </div>
             <NotifBell state={state} />
-            <SpeedControls speed={speed} setSpeed={setSpeed} />
-            <Btn disabled={busy || !!pending || !p.alive} onClick={() => act({ type: "tick", months: 1 })}>
-              +1m
-            </Btn>
-            <Btn kind="ghost" disabled={busy || !!pending || !p.alive} onClick={() => act({ type: "tick", months: 12 })}>
-              +1y
-            </Btn>
+            <SpeedControls
+              speed={speed}
+              setSpeed={chooseSpeed}
+              onStep={busy || !!pending || !p.alive ? undefined : (m) => act({ type: "tick", months: m })}
+            />
           </div>
         </header>
 
@@ -320,7 +373,18 @@ export function GameApp({ id }: { id: string }) {
       {helpOpen ? (
         <HowItWorks view={view} help={VIEW_HELP[view] ?? ""} onClose={() => setHelpOpen(false)} />
       ) : null}
-      {debugOpen ? <DebugModal state={state} act={act} onClose={() => setDebugOpen(false)} /> : null}
+      {debugOpen ? (
+        <DebugModal
+          state={state}
+          act={act}
+          onClose={() => setDebugOpen(false)}
+          onTreasury={() => {
+            setDebugOpen(false);
+            setTreasuryOpen(true);
+          }}
+        />
+      ) : null}
+      {treasuryOpen ? <TreasuryModal state={state} act={act} onClose={() => setTreasuryOpen(false)} /> : null}
       {review && review.year < state.time.year && reviewSeenYear !== review.year ? (
         <Modal title={`Year ${review.year} — the accounts close`}>
           <div className="grid grid-cols-2 gap-3 text-sm">

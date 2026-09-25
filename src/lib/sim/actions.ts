@@ -2,8 +2,11 @@ import { ADVISOR_DEFS, CHALLENGE_DEFS, companyRating, forecastLabel, getAdv, GOA
 import { BILL_TOPICS, INDUSTRIES, SKILLS, TRACKS, industryMeta } from "./catalog";
 import { devOp } from "./debug";
 import { history, news, note, rng, tickMonths, timeline, unlock } from "./engine";
-import { computeNetWorth, credit, liquidCash, monthlyLoanPayment, spend } from "./finance";
+import { computeNetWorth, credit, liquidCash, money, monthlyLoanPayment, spend } from "./finance";
+import { MINES_PRESETS, MINES_TILES, minesLayout, minesView, newMinesSession } from "./mines";
+import { adminOp } from "./debug";
 import type {
+  Loan,
   EducationTrack,
   FoundPayload,
   GameState,
@@ -298,6 +301,22 @@ export function applyAction(state: GameState, action: PlayerAction): { state: Ga
         break;
       case "dev":
         log.push(devOp(state, action.op, action.args ?? {}));
+        break;
+      case "minesStart":
+        minesStart(state, action.stake, action.mines, log);
+        break;
+      case "minesReveal":
+        minesReveal(state, action.tile, log);
+        break;
+      case "minesCashout":
+        minesCashout(state, log);
+        break;
+      case "minesClear":
+        getAdv(state).mines = null;
+        log.push("Board cleared.");
+        break;
+      case "admin":
+        log.push(adminOp(state, action.op, action.key, action.amount));
         break;
       default:
         log.push("Unknown action");
@@ -716,7 +735,7 @@ function transfer(state: GameState, fromId: string, toId: string, amount: number
   log.push("Transferred.");
 }
 
-function applyLoan(state: GameState, kind: GameState["player"]["finances"]["loans"][number]["kind"], amount: number, termMonths: number, log: string[]) {
+function applyLoan(state: GameState, kind: Loan["kind"], amount: number, termMonths: number, log: string[]): Loan | null {
   const p = state.player;
   const country = state.world.countries.find((c) => c.id === p.countryId)!;
   const bank = state.world.banks.find((b) => b.countryId === p.countryId)!;
@@ -738,13 +757,13 @@ function applyLoan(state: GameState, kind: GameState["player"]["finances"]["loan
   const prob = clamp(0.15 + (score - 500) / 500 + (eligible ? 0.3 : -0.4) - util, 0.02, 0.9);
   log.push(`Underwrite: score ${score}, rate ~${rate.toFixed(1)}%, p(approve) ${Math.round(prob * 100)}%.`);
   if (!chance(rng.bind(null, state), prob)) {
-    log.push("Loan declined.");
+    log.push(`Loan declined — ${amount > maxAmt ? "size exceeds what income and collateral support" : score <= 500 ? "credit score too low" : util >= 0.65 ? "existing instalments already absorb too much income" : p.finances.defaults >= 3 ? "too many past defaults" : "underwriting said no"}.`);
     note(state, "A bank declined your application.", "warn");
     history(state, "finance", `Loan declined (${kind})`);
-    return;
+    return null;
   }
   const monthly = monthlyLoanPayment(amount, rate, termMonths);
-  p.finances.loans.push({
+  const loan: Loan = {
     id: uid("ln"),
     kind,
     lender: bank.name,
@@ -756,10 +775,13 @@ function applyLoan(state: GameState, kind: GameState["player"]["finances"]["loan
     monthly,
     status: "current",
     missed: 0,
-  });
+  };
+  p.finances.loans.push(loan);
   credit(p, amount, `${kind} loan proceeds`, "loan", date(state));
-  log.push(`Approved. ${formatINR(amount)} at ${rate.toFixed(1)}% · ${formatINR(monthly)}/mo.`);
+  ledger(state, `${kind} loan funded · ${rate.toFixed(1)}% · ${termMonths}mo`, amount);
+  log.push(`Approved. ${formatINR(amount)} at ${rate.toFixed(1)}% · ${formatINR(monthly)}/mo (interest first, then principal).`);
   note(state, "Loan funded.", "good");
+  return loan;
 }
 
 function totalUpcoming(p: GameState["player"]) {
@@ -773,10 +795,22 @@ function repayLoan(state: GameState, loanId: string, amount: number, log: string
     log.push("Not enough cash.");
     return;
   }
-  loan.remaining = Math.max(0, loan.remaining - amount);
-  if (loan.remaining === 0) loan.status = "paid";
+  loan.remaining = Math.max(0, round(loan.remaining - amount, 2));
+  if (loan.remaining <= 0) {
+    loan.remaining = 0;
+    loan.status = "paid";
+    loan.monthly = 0;
+    loan.monthsLeft = 0;
+    note(state, `${loan.kind} loan cleared early.`, "good");
+    timeline(state, `Repaid the ${loan.kind} loan in full.`, "finance");
+  } else {
+    // Re-amortise over the remaining term so the instalment reflects reality.
+    loan.monthsLeft = Math.max(1, loan.monthsLeft);
+    loan.monthly = monthlyLoanPayment(loan.remaining, loan.rate, loan.monthsLeft);
+  }
+  ledger(state, `Loan prepayment (${loan.kind})`, -amount);
   state.player.finances.creditScore = clamp(state.player.finances.creditScore + 2, 300, 900);
-  log.push(`Remaining ${formatINR(loan.remaining)}.`);
+  log.push(`Remaining ${formatINR(loan.remaining)} · new instalment ${formatINR(loan.monthly)}/mo.`);
 }
 
 function tradeStock(state: GameState, ticker: string, shares: number, side: "buy" | "sell", log: string[]) {
@@ -862,17 +896,25 @@ function buyProperty(state: GameState, listingId: string, mortgage: boolean, log
     log.push("Listing gone.");
     return;
   }
-  let price = listing.distressed ? listing.price * 0.82 : listing.price;
+  const price = round(listing.distressed ? listing.price * 0.82 : listing.price, 2);
+  let loan: Loan | null = null;
   if (mortgage) {
-    const down = price * 0.25;
+    const down = round(price * 0.25, 2);
     if (!spend(state.player, down, `Down payment ${listing.name}`, "property", date(state))) {
-      log.push("Need 25% down.");
+      log.push(`Need 25% down (${formatINR(down)}).`);
       return;
     }
-    const loanAmt = price - down;
-    applyLoan(state, "home", loanAmt, 240, log);
+    loan = applyLoan(state, "home", round(price - down, 2), 240, log);
+    if (!loan) {
+      // Financing fell through: give the deposit back and walk away. The old
+      // code kept the deposit AND handed over the property — free houses.
+      credit(state.player, down, `Deposit refunded · ${listing.name}`, "property", date(state));
+      log.push("Mortgage declined — purchase cancelled, deposit refunded.");
+      note(state, `The mortgage for ${listing.name} was declined. Your deposit was refunded.`, "warn");
+      return;
+    }
   } else if (!spend(state.player, price, `Buy ${listing.name}`, "property", date(state))) {
-    log.push("Cannot afford this property.");
+    log.push(`Cannot afford this property (${formatINR(price)}).`);
     return;
   }
   state.player.properties.push({
@@ -888,15 +930,17 @@ function buyProperty(state: GameState, listingId: string, mortgage: boolean, log
     value: listing.price,
     rent: listing.kind === "house" || listing.kind === "apartment" ? 0 : listing.rent,
     occupancy: listing.kind === "house" || listing.kind === "apartment" ? 0 : listing.occupancy,
-    maintenance: price * 0.004,
-    tax: price * 0.0012,
-    mortgaged: mortgage,
+    maintenance: round(price * 0.004, 2),
+    tax: round(price * 0.0012, 2),
+    mortgaged: Boolean(loan),
+    loanId: loan?.id,
     yearBought: state.time.year,
   });
   state.world.properties = state.world.properties.filter((p) => p.id !== listingId);
   unlock(state, "first_prop");
   timeline(state, `Bought ${listing.name}.`, "property");
-  log.push(`Purchased ${listing.name} for ${formatINR(price)}.`);
+  ledger(state, `Bought ${listing.name}${loan ? " (mortgaged)" : ""}`, -price);
+  log.push(`Purchased ${listing.name} for ${formatINR(price)}${loan ? ` with a ${formatINR(loan.principal)} mortgage` : ""}.`);
 }
 
 function sellProperty(state: GameState, propertyId: string, log: string[]) {
@@ -1048,7 +1092,12 @@ function raiseFunding(state: GameState, companyId: string, source: string, amoun
     prob = 0.12 + co.growth / 200 + p.reputation.business / 400;
   }
   if (source === "bank") {
-    applyLoan(state, "startup", amount, 60, log);
+    const l = applyLoan(state, "startup", amount, 60, log);
+    if (l) {
+      co.cash += l.principal;
+      co.debt += l.principal;
+      ledger(state, `Bank facility drawn into ${co.name}`, l.principal);
+    }
     return;
   }
   if (source === "crowd") {
@@ -1490,20 +1539,6 @@ function orgAct(state: GameState, orgId: string, act: string, log: string[]) {
   log.push(`${org.name} updated.`);
 }
 
-function factorialRatio(n: number, k: number): number {
-  let p = 1;
-  for (let i = 0; i < k; i++) p *= (n - i);
-  return p;
-}
-
-function minesMultiplier(safePicked: number, tiles: number, mines: number, house = 0.03): number {
-  if (safePicked <= 0) return 1;
-  const safe = tiles - mines;
-  let p = 1;
-  for (let i = 0; i < safePicked; i++) p *= (safe - i) / (tiles - i);
-  return (1 - house) / Math.max(1e-9, p);
-}
-
 function gamble(state: GameState, game: string, stake: number, extra: Record<string, unknown>, log: string[]) {
   if (stake <= 0) return;
   if (!spend(state.player, stake, `Wager ${game}`, "gamble", date(state))) {
@@ -1544,23 +1579,26 @@ function gamble(state: GameState, game: string, stake: number, extra: Record<str
     if (hit) win = stake * 2500;
     detail = "P(jackpot) = 1/5000. EV << stake.";
   } else if (game === "mines") {
-    const tiles = 25;
-    const mines = Number(extra.mines ?? 5);
-    const picks = Number(extra.picks ?? 3);
-    let hit = false;
-    let safe = 0;
-    for (let i = 0; i < picks; i++) {
-      const remain = tiles - i;
-      const mLeft = mines - (hit ? 1 : 0);
-      if (rng(state) < mLeft / remain) {
-        hit = true;
-        break;
+    // Legacy one-shot entry point: auto-plays a real round tile by tile so the
+    // maths is identical to playing it by hand. The UI uses minesStart/Reveal.
+    credit(p, stake, "Mines stake returned (switching to a live round)", "gamble", date(state));
+    p.gambling.lifetimeWagered -= stake;
+    const mines = clamp(Math.round(Number(extra.mines ?? 5)), 1, MINES_TILES - 1);
+    const picks = clamp(Math.round(Number(extra.picks ?? 3)), 1, MINES_TILES - mines);
+    minesStart(state, stake, mines, log);
+    const sess = getAdv(state).mines;
+    if (!sess || sess.status !== "live") {
+      detail = "Round could not be started.";
+    } else {
+      const order = [...Array(MINES_TILES).keys()].sort(() => rng(state) - 0.5);
+      for (const tile of order) {
+        if (sess.revealed.length >= picks || sess.status !== "live") break;
+        minesReveal(state, tile, log);
       }
-      safe++;
+      if (sess.status === "live") minesCashout(state, log);
+      detail = `Auto-played ${picks} picks on a ${mines}-mine board. The live board in the Underground panel is the real game.`;
     }
-    const multi = minesMultiplier(safe, tiles, mines);
-    if (!hit) win = stake * multi;
-    detail = `5×5, ${mines} mines, ${picks} picks. Survived ${safe}. Multiplier if cashout after ${safe}: ${multi.toFixed(2)}×. P(survive k) = Π (safe-i)/(tiles-i).`;
+    return; // the round settles its own money
   }
   if (win > 0) {
     credit(p, win, `Payout ${game}`, "gamble", date(state));
@@ -1573,7 +1611,117 @@ function gamble(state: GameState, game: string, stake: number, extra: Record<str
     log.push(`Lost ${formatINR(stake)}. ${detail}`);
   }
   if (win - stake > 100000) ledger(state, `Big gambling win (${game})`, win - stake);
-  void factorialRatio;
+}
+
+/* ------------------------------------------------------------------ mines */
+
+/** Start a real round. The stake leaves your liquid money once, up front, and
+ *  the board is generated from a seed — you cannot see where the mines are. */
+function minesStart(state: GameState, stakeRaw: number, minesRaw: number, log: string[]) {
+  const adv = getAdv(state);
+  if (adv.mines && adv.mines.status === "live") {
+    log.push("A round is already in progress — cash out or finish it first.");
+    return;
+  }
+  const stake = Math.round(money(stakeRaw));
+  const mines = clamp(Math.round(money(minesRaw)), 1, MINES_TILES - 1);
+  if (stake <= 0) {
+    log.push("Enter a stake above zero.");
+    return;
+  }
+  const liquid = liquidCash(state.player);
+  if (stake > liquid) {
+    log.push(`Stake ${formatINR(stake)} exceeds your liquid cash ${formatINR(liquid)}. Nothing was taken.`);
+    return;
+  }
+  if (!spend(state.player, stake, `Mines stake (${mines} mines)`, "gamble", date(state))) {
+    log.push("Stake exceeds bankroll.");
+    return;
+  }
+  void MINES_PRESETS;
+  const seed = ((state.rng >>> 0) ^ (Math.floor(rng(state) * 0xffffffff) >>> 0)) >>> 0;
+  adv.mines = newMinesSession(uid("mns"), stake, mines, seed, date(state), state.ticks);
+  const p = state.player;
+  p.gambling.lifetimeWagered += stake;
+  p.gambling.bankrollSessions += 1;
+  p.gambling.lastGame = "mines";
+  const v = minesView(adv.mines);
+  const mf = adv.monthFlow;
+  if (mf) mf.flows.gambling = round(money(mf.flows.gambling) - stake, 2);
+  log.push(
+    `Round started: ${formatINR(stake)} on a 5×5 board with ${mines} mines. The first tile is ${(v.safeProb * 100).toFixed(1)}% safe; cashing out now returns your stake.`,
+  );
+}
+
+/** Open one tile. Safe → the multiplier climbs. Mine → the round is over. */
+function minesReveal(state: GameState, tileRaw: number, log: string[]) {
+  const adv = getAdv(state);
+  const sess = adv.mines;
+  if (!sess || sess.status !== "live") {
+    log.push("No live round — start one first.");
+    return;
+  }
+  const tile = Math.floor(money(tileRaw));
+  if (tile < 0 || tile >= sess.tiles) {
+    log.push("That tile is off the board.");
+    return;
+  }
+  if (sess.revealed.includes(tile)) {
+    log.push("You already opened that tile.");
+    return;
+  }
+  const before = minesView(sess);
+  if (minesLayout(sess.seed, sess.tiles, sess.mines).includes(tile)) {
+    sess.status = "bust";
+    sess.bustTile = tile;
+    sess.payout = 0;
+    const p = state.player;
+    p.gambling.lifetimeLost += sess.stake;
+    adv.stats.biggestLoss = Math.max(adv.stats.biggestLoss, sess.stake);
+    note(state, `Mines: tile ${tile + 1} was a mine. ${formatINR(sess.stake)} gone after ${before.safePicked} safe tiles.`, "bad");
+    ledger(state, `Mines bust after ${before.safePicked} gems`, -sess.stake);
+    log.push(
+      `Boom — tile ${tile + 1} was a mine. Stake lost (${formatINR(sess.stake)}). You had ${before.safePicked} gems worth ${formatINR(before.cashoutNow)}.`,
+    );
+    return;
+  }
+  sess.revealed.push(tile);
+  const after = minesView(sess);
+  log.push(
+    `Tile ${tile + 1}: gem. ${after.safePicked} safe · multiplier ${after.multiplier.toFixed(2)}× (${formatINR(after.cashoutNow)}). ` +
+      (after.maxed
+        ? "Every safe tile is open — cashing out."
+        : `Next tile is ${(after.safeProb * 100).toFixed(1)}% safe for ${after.nextMultiplier.toFixed(2)}×.`),
+  );
+  if (after.maxed) minesCashout(state, log);
+}
+
+/** Bank the round at the current multiplier. */
+function minesCashout(state: GameState, log: string[]) {
+  const adv = getAdv(state);
+  const sess = adv.mines;
+  if (!sess || sess.status !== "live") {
+    log.push("Nothing to cash out.");
+    return;
+  }
+  const v = minesView(sess);
+  const payout = round(v.cashoutNow, 2);
+  sess.status = "cashed";
+  sess.payout = payout;
+  const p = state.player;
+  credit(p, payout, `Mines cash-out (${v.safePicked} gems @ ${v.multiplier.toFixed(2)}×)`, "gamble", date(state));
+  p.gambling.lifetimeWon += payout;
+  const net = round(payout - sess.stake, 2);
+  adv.stats.biggestWin = Math.max(adv.stats.biggestWin, Math.max(0, net));
+  const mf = adv.monthFlow;
+  if (mf) mf.flows.gambling = round(money(mf.flows.gambling) + payout, 2);
+  if (net > 0) {
+    note(state, `Mines cash-out: ${formatINR(payout)} (${v.multiplier.toFixed(2)}× on ${v.safePicked} gems).`, "good");
+    ledger(state, `Mines cash-out · ${v.safePicked} gems · ${v.multiplier.toFixed(2)}×`, net);
+  } else {
+    ledger(state, `Mines cash-out · ${v.safePicked} gems`, net);
+  }
+  log.push(`Cashed out ${formatINR(payout)} at ${v.multiplier.toFixed(2)}× — ${net >= 0 ? "+" : "−"}${formatINR(Math.abs(net))} on the round.`);
 }
 
 function foundCasino(state: GameState, name: string, cityId: string, log: string[]) {
@@ -1801,7 +1949,7 @@ function resolveDecision(state: GameState, decisionId: string, optionId: string,
   }
 }
 
-export { minesMultiplier };
+export { minesMultiplier, minesLayout, minesView, type MinesSession } from "./mines";
 void INDUSTRIES;
 void liquidCash;
 void round;

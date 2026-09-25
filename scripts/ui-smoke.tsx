@@ -1,0 +1,88 @@
+// UI smoke test (run: npm run ui-test).
+// Renders every panel and the new game surfaces to static markup, so a runtime
+// error in any view (undefined field, bad map, missing key) fails the build
+// instead of showing up as a blank screen for a player.
+import { renderToStaticMarkup } from "react-dom/server";
+import { applyAction } from "../src/lib/sim/actions";
+import { createGame } from "../src/lib/sim/create";
+import { tickMonths } from "../src/lib/sim/engine";
+import type { GameState, PlayerAction } from "../src/lib/sim/types";
+import { MinesGame } from "../src/components/game/MinesGame";
+import { Panels } from "../src/components/game/panels";
+import { CashFlow } from "../src/components/game/panels2";
+import { SpeedControls, TreasuryModal } from "../src/components/game/overlays";
+
+let failures = 0;
+function check(label: string, cond: boolean, extra = "") {
+  console.log(`${cond ? "PASS" : "FAIL"}  ${label}${extra ? " — " + extra : ""}`);
+  if (!cond) failures++;
+}
+
+const input = {
+  mode: "entrepreneur" as const,
+  name: "UI Smoke",
+  age: 25,
+  countryId: "indara",
+  background: "middle",
+  educationLevel: 3,
+  wealth: 400000,
+  traits: { risk: 60, ambition: 70, discipline: 60, negotiation: 55, leadership: 50, creativity: 55, patience: 50, frugality: 50 },
+  appearance: { skin: "#c68642", hair: "#1a120b", eyes: "#3d2914", style: "sharp" as const, portrait: "gold" as const },
+  nationality: "Indaran",
+  seed: "ui-smoke",
+};
+
+const state: GameState = createGame({ ...input });
+const act = (a: PlayerAction) => {
+  applyAction(state, a);
+};
+
+// Give the life a few months of real history so the money panels have data.
+applyAction(state, { type: "dev", op: "toggle" });
+applyAction(state, { type: "dev", op: "add_money", args: { amount: 3_000_000 } });
+applyAction(state, { type: "hireAdvisor", advisorId: "accountant" });
+for (let i = 0; i < 6; i++) {
+  if (state.pending.length) state.pending.splice(0, state.pending.length);
+  tickMonths(state, 1);
+}
+applyAction(state, { type: "minesStart", stake: 50_000, mines: 5 });
+applyAction(state, { type: "minesReveal", tile: 0 });
+
+const VIEWS = [
+  "life", "career", "staff", "bank", "markets", "property", "business", "opps", "world",
+  "politics", "concord", "media", "under", "analysis", "cashflow", "research", "stats",
+  "calendar", "news", "legacy",
+];
+
+for (const view of VIEWS) {
+  let html = "";
+  let error = "";
+  try {
+    html = renderToStaticMarkup(<Panels view={view} state={state} act={act} busy={false} />);
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+  check(`view "${view}" renders`, error === "" && html.length > 100, error || `${html.length} bytes`);
+}
+
+const mines = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
+check("mines board has 25 tiles", (mines.match(/aspect-square/g) ?? []).length === 25);
+check("mines shows the live multiplier and cash-out", /×/.test(mines) && /Cash out/.test(mines));
+check("mines shows next-tile odds", /% safe/.test(mines));
+
+const flow = renderToStaticMarkup(<CashFlow state={state} act={act} />);
+check("cash flow shows runway and burn", /Runway/.test(flow) && /Fixed monthly burn/.test(flow));
+check("cash flow shows the advisor line", /Advisors/.test(flow));
+check("cash flow shows debt service", /Debt service/.test(flow));
+
+const speeds = renderToStaticMarkup(<SpeedControls speed={0.25} setSpeed={() => {}} onStep={() => {}} />);
+check("time controls offer slow speeds and manual steps", /¼×/.test(speeds) && /½×/.test(speeds) && /\+1mo/.test(speeds) && /\+1y/.test(speeds));
+
+const locked = renderToStaticMarkup(<TreasuryModal state={state} act={act} onClose={() => {}} />);
+check("treasury asks for the key when locked", /admin key/i.test(locked));
+applyAction(state, { type: "admin", op: "unlock", key: process.env.NEXT_PUBLIC_ADMIN_KEY ?? "aurelion-admin" });
+const unlocked = renderToStaticMarkup(<TreasuryModal state={state} act={act} onClose={() => {}} />);
+check("treasury offers draws once unlocked", /Draw/.test(unlocked) && /Lock the treasury/.test(unlocked));
+
+console.log(failures === 0 ? "\nUI SMOKE: ALL CHECKS PASSED" : `\nUI SMOKE: ${failures} CHECK(S) FAILED`);
+process.exit(failures === 0 ? 0 : 1);

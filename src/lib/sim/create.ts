@@ -518,6 +518,7 @@ function buildPlayer(
       monthlyExpenses: 0,
       livingCost: 16000,
       taxPaidYtd: 0,
+      arrears: 0,
       netWorthHistory: [{ t: "January 2026", v: wealth }],
       incomeHistory: [{ t: "January 2026", v: 0 }],
     },

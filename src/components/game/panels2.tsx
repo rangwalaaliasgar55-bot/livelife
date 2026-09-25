@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   ADVISOR_DEFS,
   buildAnalysis,
+  cashFlowReport,
   buildCalendar,
   CHALLENGE_DEFS,
   forecastLabel,
@@ -555,6 +556,202 @@ export function CalendarP({ state }: { state: GameState }) {
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- cash flow */
+
+function FlowBar({ value, max, tone }: { value: number; max: number; tone: "in" | "out" }) {
+  const pct = max > 0 ? Math.min(100, (Math.abs(value) / max) * 100) : 0;
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+      <span
+        className={`block h-full rounded-full ${tone === "in" ? "bg-teal-300/80" : "bg-rose-300/80"}`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+export function CashFlow({ state, act }: { state: GameState; act: (a: PlayerAction) => void }) {
+  const rep = cashFlowReport(state);
+  const adv = getAdv(state);
+  const p = state.player;
+  const months = adv.flowHistory.slice(0, 12);
+  const maxSide = Math.max(
+    1,
+    ...months.map((m) => Math.max(Math.abs(m.income), Math.abs(m.expenses))),
+  );
+  const loans = p.finances.loans.filter((l) => l.status !== "paid");
+  const interestNow = loans.reduce((s, l) => s + (l.remaining * l.rate) / 100 / 12, 0);
+  const principalNow = Math.max(0, loans.reduce((s, l) => s + l.monthly, 0) - interestNow);
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      <Card className="lg:col-span-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <Label>This month · {rep.t}</Label>
+          <span className={`text-sm ${rep.net >= 0 ? "text-teal-300" : "text-rose-300"}`}>
+            net {rep.net >= 0 ? "+" : "−"}
+            {formatINR(Math.abs(rep.net))}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="tick">Money in · {formatINR(rep.income)}</p>
+            {rep.incomeLines.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--muted)]">Nothing came in this month.</p>
+            ) : (
+              rep.incomeLines.map((l) => (
+                <div key={l.key} className="mt-2">
+                  <div className="flex justify-between text-sm">
+                    <span>{l.label}</span>
+                    <span className="text-teal-300">+{formatINR(l.value)}</span>
+                  </div>
+                  <FlowBar value={l.value} max={Math.max(1, ...rep.incomeLines.map((x) => x.value))} tone="in" />
+                </div>
+              ))
+            )}
+          </div>
+          <div>
+            <p className="tick">Money out · {formatINR(rep.expenses)}</p>
+            {rep.expenseLines.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--muted)]">No outflows recorded.</p>
+            ) : (
+              rep.expenseLines.map((l) => (
+                <div key={l.key} className="mt-2">
+                  <div className="flex justify-between text-sm">
+                    <span>{l.label}</span>
+                    <span className="text-rose-300">−{formatINR(Math.abs(l.value))}</span>
+                  </div>
+                  <FlowBar value={l.value} max={Math.max(1, ...rep.expenseLines.map((x) => Math.abs(x.value)))} tone="out" />
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <p className="mt-4 text-xs text-[var(--muted)]">
+          Every line is a real posting from the month just simulated — nothing is estimated. The same numbers appear on your bank
+          statements and in the ledger.
+        </p>
+      </Card>
+
+      <Card>
+        <Label>Burn & runway</Label>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Liquid cash</span>
+            <span>{formatINR(rep.liquid)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Fixed monthly burn</span>
+            <span>{formatINR(rep.fixedBurn)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Runway</span>
+            <span className={rep.runway === Infinity ? "text-teal-300" : rep.runway < 3 ? "text-rose-300" : ""}>
+              {rep.runway === Infinity ? "not burning" : `${rep.runway.toFixed(1)} months`}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Unpaid (arrears)</span>
+            <span className={rep.arrears > 0 ? "text-rose-300" : ""}>{formatINR(rep.arrears)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Short months (last 12)</span>
+            <span>{rep.shortfallMonths}</span>
+          </div>
+        </div>
+        <div className="mt-4 border-t border-white/10 pt-3 text-xs text-[var(--muted)]">
+          <p className="tick">12-month totals</p>
+          <p className="mt-1">
+            in {formatINR(rep.income12)} · out {formatINR(rep.expense12)} ·{" "}
+            <span className={rep.net12 >= 0 ? "text-teal-300" : "text-rose-300"}>
+              net {rep.net12 >= 0 ? "+" : "−"}
+              {formatINR(Math.abs(rep.net12))}
+            </span>
+          </p>
+          {rep.biggestLeak ? (
+            <p className="mt-1">
+              Largest outflow: {rep.biggestLeak.label} ≈ {formatINR(rep.biggestLeak.value)}/mo.
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-4">
+          <Btn kind="ghost" onClick={() => void act({ type: "startResearch", topic: "cashflow" })}>
+            Commission a cash-flow audit (₹20,000)
+          </Btn>
+        </div>
+      </Card>
+
+      <Card className="lg:col-span-2">
+        <Label>Last {months.length || 0} months</Label>
+        {months.length === 0 ? (
+          <p className="mt-2 text-sm text-[var(--muted)]">Live a month and the breakdown appears here.</p>
+        ) : (
+          <Table
+            headers={["Month", "In", "Out", "Net", "Shape"]}
+            rows={months.map((m) => {
+              const net = m.income - m.expenses;
+              return [
+                <span key="t">{m.t}</span>,
+                <span key="in" className="text-teal-300">{formatINR(m.income)}</span>,
+                <span key="out" className="text-rose-300">{formatINR(m.expenses)}</span>,
+                <span key="net" className={net >= 0 ? "text-teal-300" : "text-rose-300"}>
+                  {net >= 0 ? "+" : "−"}
+                  {formatINR(Math.abs(net))}
+                </span>,
+                <div key="shape" className="w-28">
+                  <FlowBar value={m.income} max={maxSide} tone="in" />
+                  <div className="mt-1">
+                    <FlowBar value={m.expenses} max={maxSide} tone="out" />
+                  </div>
+                </div>,
+              ];
+            })}
+          />
+        )}
+      </Card>
+
+      <Card>
+        <Label>Debt service</Label>
+        {loans.length === 0 ? (
+          <p className="mt-2 text-sm text-[var(--muted)]">No open facilities.</p>
+        ) : (
+          <div className="mt-2 space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-[var(--muted)]">Instalments this month</span>
+              <span>{formatINR(loans.reduce((s, l) => s + l.monthly, 0))}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--muted)]">· interest</span>
+              <span className="text-rose-300">{formatINR(interestNow)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--muted)]">· principal</span>
+              <span className="text-teal-300">{formatINR(principalNow)}</span>
+            </div>
+            {loans.map((l) => (
+              <div key={l.id} className="border-t border-white/10 pt-2">
+                <div className="flex justify-between">
+                  <span>
+                    {l.kind} · {l.lender}
+                  </span>
+                  <span className={l.status === "current" ? "text-[var(--muted)]" : "text-rose-300"}>{l.status}</span>
+                </div>
+                <p className="text-xs text-[var(--muted)]">
+                  {formatINR(l.remaining)} left @ {l.rate.toFixed(2)}% · {formatINR(l.monthly)}/mo · {l.monthsLeft} months
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-4">
+          <Btn kind="ghost" onClick={() => void act({ type: "startResearch", topic: "debt" })}>
+            Commission a debt review (₹30,000)
+          </Btn>
+        </div>
+      </Card>
     </div>
   );
 }
