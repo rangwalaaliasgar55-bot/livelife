@@ -989,6 +989,8 @@ export type PlayerAction =
   | { type: "foundAgency"; name: string }
   | { type: "agencyPromote"; companyId: string; budget: number }
   | { type: "buyAICompany"; companyId: string }
+  | { type: "buyAnyCompany"; companyId: string }
+  | { type: "empireSpend"; kind: "marketingBlitz"|"talentRaid"|"politicalWarChest"|"infraBoost"; amount: number }
   | { type: "buyGovHelp"; kind: "relief" | "land" | "contract" }
   | { type: "buyPartyMember"; partyId: string }
   | { type: "hireSecurity"; level: number }

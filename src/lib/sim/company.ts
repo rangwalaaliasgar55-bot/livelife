@@ -8,6 +8,7 @@
 import type { Decision, GameState, ListedCompany } from "./types";
 import { bizFlow, bizQueue, getBiz, pushLog, type CompanyHQ, type HQReport, type PayLevel, type RoleId, type Strategy } from "./biz";
 import { industryMeta } from "./catalog";
+
 import { acceptance, checkControl, sharePrice } from "./corporate";
 import { credit, money, spend, spendUpTo } from "./finance";
 import { history, news, note, timeline, unlock } from "./feed";
@@ -131,6 +132,8 @@ export function getHQ(state: GameState, co: ListedCompany): CompanyHQ {
       log: [],
       corpDecisionTick: state.ticks,
       ceoAuto: true,
+      autoHire: true,
+      autoBuy: true,
     } as CompanyHQ;
     b.hq[co.id] = hq;
     const wage = cityOf(state, co)?.avgWage ?? 800000;
@@ -142,6 +145,8 @@ export function getHQ(state: GameState, co: ListedCompany): CompanyHQ {
   hq.markets ??= [];
   hq.log ??= [];
   if ((hq as any).ceoAuto == null) (hq as any).ceoAuto = true;
+  if ((hq as any).autoHire == null) (hq as any).autoHire = true;
+  if ((hq as any).autoBuy == null) (hq as any).autoBuy = true;
   if (hq.morale < 58) hq.morale = clamp(hq.morale + 8, 0, 100);
   // undo previous erroneous duplicate ceoFreeDiscount var if any
   return hq;
@@ -193,6 +198,105 @@ export function payrollOf(state: GameState, co: ListedCompany, hq = getHQ(state,
   return Math.max(0, base - free);
 }
 
+export function hqAutoHireToggle(state: GameState, coId: string, on: boolean, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===coId && state.player.ownedCompanyIds.includes(c.id));
+  if (!co) { log.push("Not your company."); return; }
+  const hq = getHQ(state, co);
+  (hq as any).autoHire = on;
+  log.push(on ? `${co.name}: Auto-employ ON — CEO hires/fires to keep capacity matched to demand every month, free.` : `${co.name}: Auto-employ OFF.`);
+}
+export function hqAutoBuyToggle(state: GameState, coId: string, on: boolean, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===coId && state.player.ownedCompanyIds.includes(c.id));
+  if (!co) { log.push("Not your company."); return; }
+  const hq = getHQ(state, co);
+  (hq as any).autoBuy = on;
+  log.push(on ? `${co.name}: Auto-buy ON — CEO will auto-acquire a cheap target each quarter when cash allows.` : `${co.name}: Auto-buy OFF.`);
+}
+export function buyAnyCompany(state: GameState, companyId: string, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===companyId);
+  if (!co) { log.push("No such company."); return; }
+  if (state.player.ownedCompanyIds.includes(companyId)) { log.push("You already own it."); return; }
+  // Allow buying ANY company - cheap to reward spending: base 0.62x valuation + small sentiment premium, influence gives up to 18% off
+  const sentimentPremium = co.sentiment > 60 ? 12 : co.sentiment > 40 ? 6 : 2;
+  const price = Math.round(co.valuation * (0.62 + sentimentPremium/100));
+  // Give discount if you have political influence or cash (spending gives empire)
+  const discount = state.player.influence.political > 70 ? 0.82 : state.player.influence.political > 40 ? 0.89 : state.player.influence.political > 10 ? 0.95 : 1;
+  const finalPrice = Math.round(price * discount);
+  if (!spend(state.player, finalPrice, `Buyout ${co.name}`, "biz", dt(state))) { log.push(`Need ${formatINR(finalPrice)} to buy out ${co.name} (${co.industry}) — valuation ${formatINR(co.valuation)} ×0.62 + ${sentimentPremium}% premium${discount<1?` -${Math.round((1-discount)*100)}% influence discount`:""} = ${formatINR(finalPrice)}.`); return; }
+  bizFlow(state, "stakes", -finalPrice);
+  co.npc = false;
+  co.shareholders = [{ id: state.player.id, name: state.player.name, type: "player", shares: co.shares }];
+  co.playerRole = "owner";
+  co.forSale = false;
+  co.sentiment = clamp(co.sentiment + 8, 10, 90);
+  if (!state.player.ownedCompanyIds.includes(co.id)) state.player.ownedCompanyIds.push(co.id);
+  const hq = getHQ(state, co);
+  (hq as any).ceoAuto = true; (hq as any).autoHire = true; (hq as any).autoBuy = true;
+  log.push(`BOUGHT OUT ${co.name} (${co.industry}) for ${formatINR(finalPrice)} — any company is buyable, spending gives you empire. Auto-CEO assigned free.`);
+  timeline(state, `Bought out ${co.name} for ${formatINR(finalPrice)} — hostile takeover complete.`, "business");
+  note(state, `${co.name} is now yours.`, "good");
+}
+export function empireSpend(state: GameState, kind: string, amountRaw: number, log: string[]) {
+  const amt = Math.round(money(amountRaw));
+  if (amt <=0) { log.push("Enter amount."); return; }
+  if (!spend(state.player, amt, `Empire spend · ${kind}`, "biz", dt(state))) { log.push(`Need ${formatINR(amt)}.`); return; }
+  bizFlow(state, "stakes", -amt);
+  if (kind==="marketingBlitz") {
+    // Boost all owned companies
+    let boosted=0;
+    for(const id of state.player.ownedCompanyIds){
+      const c = state.world.companies.find(x=>x.id===id);
+      if(c){ c.customers = Math.round(c.customers * (1 + Math.min(0.25, amt/8000000 * 0.12))); c.revenue = Math.round(c.revenue * (1 + Math.min(0.18, amt/10000000 * 0.09))); c.sentiment = clamp(c.sentiment+6,10,95); boosted++; }
+    }
+    log.push(`Marketing blitz ${formatINR(amt)}: ${boosted} companies +${Math.min(25, Math.round(amt/8000000*12))}% customers, revenue up, sentiment +6. Spending gives empire growth.`);
+  } else if (kind==="talentRaid") {
+    for(const id of state.player.ownedCompanyIds){
+      const c = state.world.companies.find(x=>x.id===id);
+      if(c){ const hq=getHQ(state,c); (hq as any).autoHire=true; hq.morale=clamp(hq.morale+10,0,100); hq.roles.eng.target+=3; hq.roles.sales.target+=2; }
+    }
+    log.push(`Talent raid ${formatINR(amt)}: poached star engineers & sales from rivals. All companies +3 eng / +2 sales targets, morale +10.`);
+  } else if (kind==="politicalWarChest") {
+    state.player.influence.political = clamp(state.player.influence.political + Math.min(25, Math.round(amt/500000)),0,100);
+    (state.player.politics as any).patrons = ((state.player.politics as any).patrons||0) + Math.floor(amt/400000);
+    log.push(`War chest ${formatINR(amt)}: +${Math.min(25, Math.round(amt/500000))} political influence, +${Math.floor(amt/400000)} patrons. Spending buys power.`);
+  } else if (kind==="infraBoost") {
+    for(const id of state.player.ownedCompanyIds){
+      const c = state.world.companies.find(x=>x.id===id);
+      if(c) c.quality = clamp(c.quality + Math.min(12, Math.round(amt/3000000)),1,100);
+    }
+    log.push(`Infrastructure ${formatINR(amt)}: all companies quality +${Math.min(12, Math.round(amt/3000000))}. Better product = more pricing power.`);
+  } else {
+    log.push(`Spent ${formatINR(amt)} on ${kind}. Empire grows.`);
+  }
+  timeline(state, `Empire spend: ${kind} ${formatINR(amt)}.`, "business");
+}
+export function hireForEverything(state: GameState, log: string[]) {
+  let hired = 0;
+  for(const id of state.player.ownedCompanyIds){
+    const c = state.world.companies.find(x=>x.id===id);
+    if(!c) continue;
+    const hq = getHQ(state, c);
+    (hq as any).ceoAuto = true; (hq as any).autoHire = true; (hq as any).autoBuy = true;
+    // instantly hire toward targets without waiting for month tick
+    for(const r of (["eng","sales","ops","mgmt"] as RoleId[])){
+      const need = Math.max(0, hq.roles[r].target - hq.roles[r].count);
+      if(need>0){ hq.roles[r].count += Math.min(need, 4); hired+= Math.min(need,4); }
+    }
+    hq.morale = clamp(hq.morale+5,0,100);
+  }
+  // Banks - use biz banks ops directly to avoid circular import
+  const biz = getBiz(state);
+  for(const b of state.world.banks.filter(x=>x.playerOwned)){
+    const ops: any = biz.banks[b.id];
+    if(ops){ ops.ceoAuto = true; ops.marketingAuto = true; const need = Math.max(2, Math.round((b.deposits + b.loans)/1.5e8 + b.branches*3)); ops.staff = Math.max(ops.staff, need); }
+  }
+  // Estates
+  for(const pr of state.player.properties){
+    const e: any = biz.estates[pr.id];
+    if(e){ e.autoRent = true; e.fullAuto = true; e.manager="premium"; }
+  }
+  log.push(`Hired for everything: ${hired} roles filled instantly across ${state.player.ownedCompanyIds.length} companies, all banks/estates set to auto. CEO now auto-employs & auto-buys forever.`);
+}
 export function hqCeoToggle(state: GameState, coId: string, on: boolean, log: string[]) {
   const co = state.world.companies.find(c=>c.id===coId && state.player.ownedCompanyIds.includes(c.id));
   if (!co) { log.push("Not your company."); return; }
@@ -337,8 +441,8 @@ export function hqPost(
   parts: { marketing: number; rd: number; interest: number; tax: number },
 ) {
   const hq = getHQ(state, co);
-  // --- FREE CEO AUTO-MANAGES whole company when enabled
-  if ((hq as any).ceoAuto) {
+  // --- FREE CEO AUTO-MANAGES whole company when enabled (autoHire/autoBuy)
+  if ((hq as any).ceoAuto && (hq as any).autoHire !== false) {
     // Keep pay at market (stable), morale-friendly
     if (hq.pay === "below" && hq.morale < 62) hq.pay = "market" as any;
     // Auto-set headcount targets to ~ 92% of capacity vs demand — growing when demand>capacity
@@ -373,6 +477,15 @@ export function hqPost(
         const before = co.cash;
         hqExpand(state, co.id, c2.id, [], 0.9);
         if (co.cash !== before) { /* expanded */ }
+      }
+    }
+    // Auto-buy: each quarter if cash heavy, CEO auto-acquires cheapest affordable target
+    if ((hq as any).autoBuy && state.ticks % 3 === 0 && co.cash > co.valuation*0.35 && co.cash > 12_000_000) {
+      const sug = ceoSuggestion(state, co.id);
+      if (sug && sug.valuation < co.cash*0.75 + debtCapacity(co)*0.5) {
+        const beforeCash = co.cash;
+        hqAcquire(state, co.id, sug.id, 14, "cash", []);
+        if (co.cash !== beforeCash) pushLog(hq.log, dt(state), `Auto-buy: acquired ${sug.name} for growth.`);
       }
     }
   }

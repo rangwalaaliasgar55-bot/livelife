@@ -3,8 +3,13 @@
 import type { GameState } from "./types";
 import type { ManagerTier, PayLevel, RoleId, Strategy, BrokerTier, DevProject } from "./biz";
 import {
+  hqAutoBuyToggle,
+  hqAutoHireToggle,
   hqCeoBuy,
   hqCeoToggle,
+  hireForEverything,
+  buyAnyCompany,
+  empireSpend,
   hqAcquire,
   hqBorrow,
   hqBuyback,
@@ -98,6 +103,16 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
       return hqCeoToggle(state, id, Boolean((a as any).on), log);
     case "hqCeoBuy":
       return hqCeoBuy(state, id, log);
+    case "hqAutoHire":
+      return hqAutoHireToggle(state, id, Boolean((a as any).on), log);
+    case "hqAutoBuy":
+      return hqAutoBuyToggle(state, id, Boolean((a as any).on), log);
+    case "hireAll":
+      return hireForEverything(state, log);
+    case "buyAnyCompany":
+      return buyAnyCompany(state, str(a.companyId) || id, log);
+    case "empireSpend":
+      return empireSpend(state, str(a.kind) || "marketingBlitz", num(a.amount), log);
     case "hqAcquire":
       return hqAcquire(
         state,

@@ -200,11 +200,21 @@ function HQBody({ state, act, co }: { state: GameState; act: Act; co: ListedComp
           <Btn kind={(hq as any).ceoAuto ? "teal" : "ghost"} onClick={() => biz("hqCeoToggle", co.id, { on: !(hq as any).ceoAuto } as any)}>
             {(hq as any).ceoAuto ? "CEO auto-manages ✓ (free)" : "CEO auto-manages (free)"}
           </Btn>
+          <Btn kind={(hq as any).autoHire ? "teal" : "ghost"} onClick={() => biz("hqAutoHire", co.id, { on: !(hq as any).autoHire } as any)}>
+            {(hq as any).autoHire ? "Auto-employ ✓" : "Auto-employ"}
+          </Btn>
+          <Btn kind={(hq as any).autoBuy ? "teal" : "ghost"} onClick={() => biz("hqAutoBuy", co.id, { on: !(hq as any).autoBuy } as any)}>
+            {(hq as any).autoBuy ? "Auto-buy ✓" : "Auto-buy"}
+          </Btn>
           <Btn kind="gold" onClick={() => biz("hqCeoBuy", co.id)}>
             CEO: Buy this company →
           </Btn>
-          <span className="text-xs text-[var(--muted)]">
-            CEO pick: {(() => {
+          <Btn kind="teal" onClick={() => biz("hireAll", "")}>
+            Hire for Everything →
+          </Btn>
+        </div>
+        <div className="mt-2 rounded-xl bg-amber-200/5 border border-amber-200/10 p-2">
+          <p className="text-xs"><span className="tick">CEO pick:</span> {(() => {
               const pool = state.world.companies.filter(c=>c.id!==co.id && c.stage!=="bankrupt" && c.valuation>0 && !state.player.ownedCompanyIds.includes(c.id));
               let best:any=null, bestScore=-1e18;
               for(const cand of pool){
@@ -214,10 +224,41 @@ function HQBody({ state, act, co }: { state: GameState; act: Act; co: ListedComp
                 if(score>bestScore){bestScore=score; best=cand;}
               }
               return best ? `${best.name} (${best.industry}) · ${formatINR(best.valuation)}` : "nothing cheap right now";
-            })()}
-          </span>
+            })()} <span className="text-[var(--muted)]">— auto-buy will grab it each quarter if cash allows</span></p>
         </div>
-        <p className="mt-1 text-[11px] text-[var(--muted)]">{(hq as any).ceoAuto ? "Auto: headcount, pay, agents and expansions happen every month. You just set strategy." : "Manual: CEO is idle — you control every hire yourself."}</p>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{(hq as any).ceoAuto ? "Auto: headcount, pay, agents and expansions happen every month. You just set strategy. Auto-employ handles hiring, Auto-buy acquires." : "Manual: CEO is idle — you control every hire yourself."}</p>
+      </Card>
+      <Card>
+        <Label>Buy out ANY company — spending gives empire</Label>
+        <p className="mt-1 text-xs text-[var(--muted)]">Any listed company is buyable outright (hostile takeover) — not just AI. Pay valuation + sentiment premium, get influence discount if you’re political.</p>
+        <div className="mt-2 max-h-52 overflow-y-auto space-y-1">
+          {state.world.companies.filter(c=>!state.player.ownedCompanyIds.includes(c.id) && c.stage!=="bankrupt").slice(0,18).map(c=>(
+            <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-white/5 px-2 py-1.5 text-xs">
+              <span className="truncate">{c.name} <span className="text-[var(--muted)]">· {c.industry} · {formatINR(c.valuation)}</span></span>
+              <Btn kind="ghost" onClick={()=> act({type:"buyAnyCompany", companyId: c.id})}>Buy {formatINR(Math.round(c.valuation*1.2))}</Btn>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 tick">Empire spending — convert cash into growth</p>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          {[
+            ["marketingBlitz", "Marketing Blitz", "+customers & revenue to all companies"],
+            ["talentRaid", "Talent Raid", "+3 eng / +2 sales, morale +10"],
+            ["politicalWarChest", "War Chest", "+influence + patrons"],
+            ["infraBoost", "Infra Boost", "+quality to all companies"],
+          ].map(([k,label,hint])=>(
+            <div key={k} className="rounded-xl border border-white/5 p-2">
+              <p className="text-xs font-medium">{label}</p>
+              <p className="text-[11px] text-[var(--muted)]">{hint}</p>
+              <div className="mt-1 flex gap-1">
+                {[500000, 2000000, 10000000].map(amt=>(
+                  <Btn key={amt} kind="ghost" onClick={()=> act({type:"empireSpend", kind: k as any, amount: amt})}>{amt>=10000000?"₹1Cr": amt>=1000000?`₹${amt/100000}L`:`₹${amt/1000}K`}</Btn>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-amber-200/80">Hire for everything: CEO auto-employ is free, Bank CEO auto-staff, Estate developer auto-rent — all spending turns into empire.</p>
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-2">

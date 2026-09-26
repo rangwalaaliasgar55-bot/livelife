@@ -38,6 +38,10 @@ export interface CompanyHQ {
   crunchTick?: number;
   /** CEO auto-manage whole company (free CEO) — hires, pay, agents, expansions, suggestions */
   ceoAuto?: boolean;
+  /** Auto-employ: CEO keeps headcount at optimal without manual targets */
+  autoHire?: boolean;
+  /** Auto-buy: CEO auto-acquires best affordable target each quarter when cash allows */
+  autoBuy?: boolean;
   /** Months in a row payroll bounced. */
   bounced?: number;
   disruption?: { months: number; hit: number };

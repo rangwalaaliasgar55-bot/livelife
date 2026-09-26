@@ -43,7 +43,7 @@ import {
 } from "./casino";
 import { applyBiz, BIZ_PRISON_BLOCKED } from "./bizactions";
 import { certPay, jobAiRisk, resolveAiLayoff, resolveTax, STUDY_LEVELS, allTracks, taxGain } from "./civic";
-import { resolveCorp } from "./company";
+import { resolveCorp, buyAnyCompany, empireSpend } from "./company";
 import { resolveBankCap, getBankOps } from "./finfirms";
 import { resolveEstate } from "./estates";
 import { getCasinoOps } from "./casinoops";
@@ -394,6 +394,12 @@ export function applyAction(state: GameState, action: PlayerAction): { state: Ga
         break;
       case "buyAICompany":
         buyAICompany(state, action.companyId, log);
+        break;
+      case "buyAnyCompany":
+        buyAnyCompany(state, action.companyId, log);
+        break;
+      case "empireSpend":
+        empireSpend(state, action.kind, action.amount, log);
         break;
       case "buyGovHelp":
         buyGovHelp(state, action.kind, log);
