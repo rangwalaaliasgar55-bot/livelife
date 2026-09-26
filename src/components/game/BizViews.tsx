@@ -191,6 +191,76 @@ function HQBody({ state, act, co }: { state: GameState; act: Act; co: ListedComp
         />
       </div>
 
+      <Card>
+        <Label>CEO — free, runs your whole company</Label>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Your CEO is <span className="text-teal-300 font-medium">free</span> — no salary for the first manager. Toggle auto-pilot and the CEO hires, fixes the bottleneck ({ROLE_DEFS[wf.bottleneck].name}), deploys agents, expands to new cities and tells you which company to buy. One click to buy what the CEO recommends.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Btn kind={(hq as any).ceoAuto ? "teal" : "ghost"} onClick={() => biz("hqCeoToggle", co.id, { on: !(hq as any).ceoAuto } as any)}>
+            {(hq as any).ceoAuto ? "CEO auto-manages ✓ (free)" : "CEO auto-manages (free)"}
+          </Btn>
+          <Btn kind={(hq as any).autoHire ? "teal" : "ghost"} onClick={() => biz("hqAutoHire", co.id, { on: !(hq as any).autoHire } as any)}>
+            {(hq as any).autoHire ? "Auto-employ ✓" : "Auto-employ"}
+          </Btn>
+          <Btn kind={(hq as any).autoBuy ? "teal" : "ghost"} onClick={() => biz("hqAutoBuy", co.id, { on: !(hq as any).autoBuy } as any)}>
+            {(hq as any).autoBuy ? "Auto-buy ✓" : "Auto-buy"}
+          </Btn>
+          <Btn kind="gold" onClick={() => biz("hqCeoBuy", co.id)}>
+            CEO: Buy this company →
+          </Btn>
+          <Btn kind="teal" onClick={() => biz("hireAll", "")}>
+            Hire for Everything →
+          </Btn>
+        </div>
+        <div className="mt-2 rounded-xl bg-amber-200/5 border border-amber-200/10 p-2">
+          <p className="text-xs"><span className="tick">CEO pick:</span> {(() => {
+              const pool = state.world.companies.filter(c=>c.id!==co.id && c.stage!=="bankrupt" && c.valuation>0 && !state.player.ownedCompanyIds.includes(c.id));
+              let best:any=null, bestScore=-1e18;
+              for(const cand of pool){
+                const cheap = cand.revenue/Math.max(1,cand.valuation);
+                const same = cand.industry===co.industry?1.8:1.0;
+                const score = cheap*1000*same + (cand.valuation<2e9?200:0);
+                if(score>bestScore){bestScore=score; best=cand;}
+              }
+              return best ? `${best.name} (${best.industry}) · ${formatINR(best.valuation)}` : "nothing cheap right now";
+            })()} <span className="text-[var(--muted)]">— auto-buy will grab it each quarter if cash allows</span></p>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{(hq as any).ceoAuto ? "Auto: headcount, pay, agents and expansions happen every month. You just set strategy. Auto-employ handles hiring, Auto-buy acquires." : "Manual: CEO is idle — you control every hire yourself."}</p>
+      </Card>
+      <Card>
+        <Label>Buy out ANY company — spending gives empire</Label>
+        <p className="mt-1 text-xs text-[var(--muted)]">Any listed company is buyable outright (hostile takeover) — not just AI. Pay valuation + sentiment premium, get influence discount if you’re political.</p>
+        <div className="mt-2 max-h-52 overflow-y-auto space-y-1">
+          {state.world.companies.filter(c=>!state.player.ownedCompanyIds.includes(c.id) && c.stage!=="bankrupt").slice(0,18).map(c=>(
+            <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-white/5 px-2 py-1.5 text-xs">
+              <span className="truncate">{c.name} <span className="text-[var(--muted)]">· {c.industry} · {formatINR(c.valuation)}</span></span>
+              <Btn kind="ghost" onClick={()=> act({type:"buyAnyCompany", companyId: c.id})}>Buy {formatINR(Math.round(c.valuation*1.2))}</Btn>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 tick">Empire spending — convert cash into growth</p>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          {[
+            ["marketingBlitz", "Marketing Blitz", "+customers & revenue to all companies"],
+            ["talentRaid", "Talent Raid", "+3 eng / +2 sales, morale +10"],
+            ["politicalWarChest", "War Chest", "+influence + patrons"],
+            ["infraBoost", "Infra Boost", "+quality to all companies"],
+          ].map(([k,label,hint])=>(
+            <div key={k} className="rounded-xl border border-white/5 p-2">
+              <p className="text-xs font-medium">{label}</p>
+              <p className="text-[11px] text-[var(--muted)]">{hint}</p>
+              <div className="mt-1 flex gap-1">
+                {[500000, 2000000, 10000000].map(amt=>(
+                  <Btn key={amt} kind="ghost" onClick={()=> act({type:"empireSpend", kind: k as any, amount: amt})}>{amt>=10000000?"₹1Cr": amt>=1000000?`₹${amt/100000}L`:`₹${amt/1000}K`}</Btn>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-amber-200/80">Hire for everything: CEO auto-employ is free, Bank CEO auto-staff, Estate developer auto-rent — all spending turns into empire.</p>
+      </Card>
+
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <Label>Monthly P&amp;L (last month)</Label>
@@ -749,13 +819,36 @@ function BankCard({ state, act, bankId }: { state: GameState; act: Act; bankId: 
           Apply policy
         </Btn>
         <Btn kind={ops.auto !== false ? "teal" : "ghost"} onClick={() => biz("bankSet", bank.id, { auto: true })}>
-          {ops.auto !== false ? "Rates auto-track market" : "Auto-track market"}
+          {ops.auto !== false ? "Rates auto" : "Auto-track rates"}
         </Btn>
-        <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: 1 })}>
-          + Branch (₹50 L)
+        <Btn kind={(ops as any).marketingAuto ? "teal" : "ghost"} onClick={() => biz("bankSet", bank.id, { marketingAuto: !(ops as any).marketingAuto } as any)}>
+          {(ops as any).marketingAuto ? "Marketing auto ✓" : "Marketing auto"}
+        </Btn>
+        <Btn kind={(ops as any).ceoAuto ? "teal" : "ghost"} onClick={() => biz("bankSet", bank.id, { ceoAuto: !(ops as any).ceoAuto } as any)}>
+          {(ops as any).ceoAuto ? "CEO auto ✓ free" : "CEO auto (free)"}
+        </Btn>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <span className="tick w-full">Branches — no limit (₹50 L fit-out each)</span>
+        {[1,5,10].map(n=>(
+          <Btn key={n} kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: n })}>
+            +{n} {n===1?"Branch": "Branches"}
+          </Btn>
+        ))}
+        <Btn kind="gold" onClick={() => {
+          const maxBank = Math.floor((bank.capital)/5000000);
+          const maxWithCash = Math.floor((bank.capital + liquidCash(state.player))/5000000);
+          const max = Math.max(maxBank, maxWithCash);
+          const want = Math.max(1, Math.min(200, max));
+          if (want>0) biz("bankBranch", bank.id, { delta: want });
+        }}>
+          + MAX ({Math.floor((bank.capital + liquidCash(state.player))/5000000)})
         </Btn>
         <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: -1 })}>
-          − Branch
+          −1
+        </Btn>
+        <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: -5 })}>
+          −5
         </Btn>
       </div>
       <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -931,7 +1024,7 @@ function EstateCard({ state, act, prop }: { state: GameState; act: Act; prop: Pr
         </p>
       ) : null}
 
-      <p className="tick mt-3">Property manager</p>
+      <p className="tick mt-3">Property manager · auto handled by developer</p>
       <div className="mt-1 flex flex-wrap gap-2">
         {(Object.keys(MANAGERS) as ManagerTier[]).map((m) => (
           <Btn key={m} kind={e.manager === m ? "teal" : "ghost"} onClick={() => biz("estManager", prop.id, { tier: m })}>
@@ -939,7 +1032,16 @@ function EstateCard({ state, act, prop }: { state: GameState; act: Act; prop: Pr
           </Btn>
         ))}
       </div>
-      <p className="mt-1 text-[11px] text-[var(--muted)]">{MANAGERS[e.manager].blurb}</p>
+      <p className="mt-1 text-[11px] text-[var(--muted)]">{MANAGERS[e.manager].blurb} · Premium = developer does all (screening, upkeep, vacancy).</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Btn kind={(e as any).autoRent ? "teal" : "ghost"} onClick={() => biz("estAuto", prop.id, { autoRent: !(e as any).autoRent } as any)}>
+          {(e as any).autoRent ? "Auto-price ✓ (tracks market)" : "Auto-price"}
+        </Btn>
+        <Btn kind={(e as any).fullAuto ? "teal" : "ghost"} onClick={() => biz("estAuto", prop.id, { fullAuto: !(e as any).fullAuto } as any)}>
+          {(e as any).fullAuto ? "Developer handles all ✓" : "Developer handles all"}
+        </Btn>
+      </div>
+      {(e as any).autoRent ? <p className="mt-1 text-[11px] text-teal-300/80">Auto: rent follows market {formatINR(mkt)}/mo, no manual pricing needed.</p> : null}
 
       {!pj || pj.stage === "done" ? (
         <>

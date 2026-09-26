@@ -151,10 +151,10 @@ function cityOf(state: GameState, prop: PropertyHolding) {
 
 export function getEstate(state: GameState, prop: PropertyHolding): EstateOps {
   const b = getBiz(state);
-  let e = b.estates[prop.id];
+  let e = b.estates[prop.id] as EstateOps | undefined;
   if (!e) {
     e = {
-      manager: "none",
+      manager: "premium",
       tenant: null,
       vacancyMonths: 0,
       listed: prop.rent > 0 ? "rent" : "off",
@@ -163,7 +163,9 @@ export function getEstate(state: GameState, prop: PropertyHolding): EstateOps {
       units: null,
       log: [],
       lastMonth: null,
-    };
+      autoRent: true,
+      fullAuto: true,
+    } as EstateOps;
     if (prop.rent > 0 && prop.occupancy > 50)
       e.tenant = {
         name: pick(R(state), TENANTS),
@@ -174,6 +176,8 @@ export function getEstate(state: GameState, prop: PropertyHolding): EstateOps {
       };
     b.estates[prop.id] = e;
   }
+  if (e.autoRent == null) e.autoRent = true;
+  if ((e as any).fullAuto == null) (e as any).fullAuto = e.manager==="premium";
   return e;
 }
 
@@ -219,6 +223,16 @@ function mine(state: GameState, id: string, log: string[]) {
   const prop = state.player.properties.find((p) => p.id === id);
   if (!prop) log.push("You don't own that property.");
   return prop;
+}
+
+export function setEstateAuto(state: GameState, propId: string, patch: Partial<Pick<EstateOps,"autoRent"|"fullAuto">>, log: string[]) {
+  const prop = mine(state, propId, log); if(!prop) return;
+  const e = getEstate(state, prop);
+  if (patch.autoRent!=null) e.autoRent = Boolean(patch.autoRent);
+  if (patch.fullAuto!=null) (e as any).fullAuto = Boolean((patch as any).fullAuto);
+  if ((e as any).fullAuto) e.manager="premium";
+  pushLog(e.log, dt(state), `Auto: rent ${e.autoRent?"on":"off"}, developer-full ${ (e as any).fullAuto?"on":"off"}.`);
+  log.push(`${prop.name}: auto-rent ${e.autoRent?"tracks market":"manual"}${ (e as any).fullAuto?", developer handles everything (premium manager, upkeep, vacancy)":""}.`);
 }
 
 export function setManager(state: GameState, propId: string, tier: ManagerTier, log: string[]) {
@@ -559,6 +573,14 @@ function tickProperty(state: GameState, prop: PropertyHolding) {
     }
   }
 
+  // --- autoRent: developer/premium handles pricing
+  if (e.autoRent && e.listed==="rent" && !e.units && !e.project) {
+    const mr = marketRent(state, prop);
+    if (mr>0 && Math.abs(prop.rent - mr)/Math.max(1,mr) > 0.06) {
+      prop.rent = Math.round(mr);
+    }
+  }
+  if ((e as any).fullAuto && e.manager!=="premium") e.manager = "premium";
   // --- condition, manager fees, repairs
   const collected = prop.rent * (prop.occupancy / 100);
   let fee = 0;

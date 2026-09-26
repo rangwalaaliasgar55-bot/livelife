@@ -2,7 +2,7 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react
 import { formatINR, formatPct } from "@/lib/sim/util";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`panel rounded-2xl p-5 ${className}`}>{children}</div>;
+  return <div className={`panel rounded-2xl p-5 transition duration-200 ease-out hover:border-[rgba(228,195,122,0.22)] ${className}`}>{children}</div>;
 }
 
 export function Label({ children }: { children: ReactNode }) {
@@ -63,7 +63,7 @@ export function Btn({
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition disabled:opacity-40 ${cls} ${className}`}
+      className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ease-out active:scale-[0.98] hover:brightness-[1.07] disabled:opacity-40 disabled:active:scale-100 ${cls} ${className}`}
     >
       {children}
     </button>
@@ -83,7 +83,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`w-full rounded-xl border border-[var(--line)] bg-[#0b0e14] px-3 py-2 text-sm text-white outline-none ${props.className ?? ""}`}
+      className={`w-full rounded-xl border border-[var(--line)] bg-[#0b0e14] px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-200/40 focus:bg-[#0e111a] ${props.className ?? ""}`}
     />
   );
 }
@@ -92,7 +92,7 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...props}
-      className={`w-full rounded-xl border border-[var(--line)] bg-[#0b0e14] px-3 py-2 text-sm text-white outline-none ${props.className ?? ""}`}
+      className={`w-full rounded-xl border border-[var(--line)] bg-[#0b0e14] px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-200/40 focus:bg-[#0e111a] ${props.className ?? ""}`}
     />
   );
 }

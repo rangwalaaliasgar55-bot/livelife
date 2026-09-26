@@ -3,6 +3,13 @@
 import type { GameState } from "./types";
 import type { ManagerTier, PayLevel, RoleId, Strategy, BrokerTier, DevProject } from "./biz";
 import {
+  hqAutoBuyToggle,
+  hqAutoHireToggle,
+  hqCeoBuy,
+  hqCeoToggle,
+  hireForEverything,
+  buyAnyCompany,
+  empireSpend,
   hqAcquire,
   hqBorrow,
   hqBuyback,
@@ -35,7 +42,7 @@ import {
   sellBrokerage,
 } from "./finfirms";
 import { casinoManage, sellCasino, type CasinoPatch } from "./casinoops";
-import { cancelProject, evict, listForSale, setManager, setRentAmount, setUnitsMode, startProject } from "./estates";
+import { cancelProject, evict, listForSale, setEstateAuto, setManager, setRentAmount, setUnitsMode, startProject } from "./estates";
 import { claimBenefit, giftTo, startCert } from "./civic";
 
 export type BizArgs = Record<string, unknown>;
@@ -92,6 +99,20 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
       return hqInject(state, id, num(a.amount), log);
     case "hqSpecial":
       return hqSpecialDividend(state, id, num(a.amount), log);
+    case "hqCeoToggle":
+      return hqCeoToggle(state, id, Boolean((a as any).on), log);
+    case "hqCeoBuy":
+      return hqCeoBuy(state, id, log);
+    case "hqAutoHire":
+      return hqAutoHireToggle(state, id, Boolean((a as any).on), log);
+    case "hqAutoBuy":
+      return hqAutoBuyToggle(state, id, Boolean((a as any).on), log);
+    case "hireAll":
+      return hireForEverything(state, log);
+    case "buyAnyCompany":
+      return buyAnyCompany(state, str(a.companyId) || id, log);
+    case "empireSpend":
+      return empireSpend(state, str(a.kind) || "marketingBlitz", num(a.amount), log);
     case "hqAcquire":
       return hqAcquire(
         state,
@@ -110,7 +131,9 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
         {
           ...nums(a, ["depositRate", "lendingRate", "risk", "staff", "marketing", "dividendPct"] as const),
           ...(a.auto === true ? { auto: true } : {}),
-        },
+          ...((a as any).marketingAuto!=null ? { marketingAuto: Boolean((a as any).marketingAuto) } : {}),
+          ...((a as any).ceoAuto!=null ? { ceoAuto: Boolean((a as any).ceoAuto) } : {}),
+        } as any,
         log,
       );
     case "bankBranch":
@@ -171,6 +194,8 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
     /* --- estates */
     case "estManager":
       return setManager(state, id, (["none", "basic", "premium"].includes(str(a.tier)) ? a.tier : "none") as ManagerTier, log);
+    case "estAuto":
+      return setEstateAuto(state, id, { autoRent: (a as any).autoRent!=null?Boolean((a as any).autoRent):undefined, fullAuto: (a as any).fullAuto!=null?Boolean((a as any).fullAuto):undefined } as any, log);
     case "estRent":
       return setRentAmount(state, id, num(a.amount), log);
     case "estSale":

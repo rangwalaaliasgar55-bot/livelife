@@ -311,6 +311,12 @@ export interface PoliticsState {
   platform: PolicyVector;
   elections: ElectionRecord[];
   billsProposed: number;
+  /** Full security detail when you are Head — blocks scandals/heat. */
+  security: number;
+  /** Full power flag — when head with high popularity you can push any policy. */
+  fullPower: boolean;
+  /** Party members you have bought / patronised. */
+  patrons: number;
 }
 
 export interface PolicyVector {
@@ -363,10 +369,35 @@ export interface OrgState {
   facilities: number;
 }
 
+export interface SocialAgency {
+  id: string;
+  name: string;
+  staff: {
+    handlers: number;
+    editors: number;
+    seo: number;
+    allRounders: number;
+  };
+  clients: number;
+  retainers: number;
+  reputation: number;
+  monthlyRevenue: number;
+  monthlyCosts: number;
+}
+
 export interface SocialState {
   platforms: SocialAccount[];
   followers: number;
   brand: number;
+  /** Real view counters — every post generates views that decay/grow organically. */
+  views: number;
+  viewsHistory: { t: string; views: number; revenue: number }[];
+  adRevenue: number;
+  sponsorships: number;
+  /** Your agency that promotes your own products/companies. */
+  agency: SocialAgency | null;
+  /** Workers that automate growth: each Handler = +reach. */
+  handlers: { id: string; name: string; skill: number; salary: number; specialty: "handler" | "editor" | "seo" | "allrounder" }[];
 }
 
 export interface SocialAccount {
@@ -375,6 +406,9 @@ export interface SocialAccount {
   followers: number;
   posts: number;
   engagement: number;
+  views: number;
+  watchHours: number;
+  revenue: number;
 }
 
 export interface MediaState {
@@ -949,6 +983,18 @@ export type PlayerAction =
   | { type: "conVote"; resolutionId: string; vote: "yes" | "no" | "abstain" }
   | { type: "conPropose"; title: string }
   | { type: "socialPost"; platform: string; topic: string; spend: number }
+  | { type: "socialGrow"; platform: string }
+  | { type: "hireSocial"; role: "handler" | "editor" | "seo" | "allrounder" }
+  | { type: "fireSocial"; handlerId: string }
+  | { type: "foundAgency"; name: string }
+  | { type: "agencyPromote"; companyId: string; budget: number }
+  | { type: "buyAICompany"; companyId: string }
+  | { type: "buyAnyCompany"; companyId: string }
+  | { type: "empireSpend"; kind: "marketingBlitz"|"talentRaid"|"politicalWarChest"|"infraBoost"; amount: number }
+  | { type: "buyGovHelp"; kind: "relief" | "land" | "contract" }
+  | { type: "buyPartyMember"; partyId: string }
+  | { type: "hireSecurity"; level: number }
+  | { type: "assumePower" }
   | { type: "foundMedia"; kind: string; name: string }
   | { type: "crimeAct"; kind: string; intensity: number }
   | { type: "foundOrg"; kind: OrgState["kind"]; name: string; doctrine: string }
