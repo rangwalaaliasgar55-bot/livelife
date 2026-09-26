@@ -591,7 +591,7 @@ export const JOB_RANKS: { rank: number; title: (ind: string) => string; mult: nu
   { rank: 10, title: () => `Chief Executive Officer`, mult: 8.5, edu: 4, exp: 18 },
 ];
 
-const INDUSTRY_JOB_LABEL: Record<Industry, string> = {
+export const INDUSTRY_JOB_LABEL: Record<Industry, string> = {
   technology: "Technology",
   ai: "AI",
   software: "Software",
@@ -669,6 +669,20 @@ export const FREELANCE_GIGS: { industry: Industry; title: string }[] = [
 ];
 
 export const ACHIEVEMENTS: { id: string; name: string; desc: string }[] = [
+  { id: "doctor", name: "Doctorate", desc: "Complete a PhD." },
+  { id: "developer", name: "Developer", desc: "Complete a property development." },
+  { id: "tax_honest", name: "Model Taxpayer", desc: "File five honest tax returns." },
+  { id: "broker_firm", name: "Wall Street", desc: "Found a brokerage firm." },
+  { id: "married", name: "Tied the Knot", desc: "Get married." },
+  { id: "parent", name: "Parenthood", desc: "Have or adopt a child." },
+  { id: "centenarian", name: "Centenarian", desc: "Live to 100." },
+  { id: "pilot", name: "Licensed to Fly", desc: "Earn a pilot licence." },
+  { id: "wings", name: "Wings", desc: "Buy your first aircraft." },
+  { id: "fleet", name: "Fleet Owner", desc: "Own five aircraft at once." },
+  { id: "yacht", name: "Sea Legs", desc: "Buy a yacht." },
+  { id: "petrolhead", name: "Petrolhead", desc: "Buy a supercar or hypercar." },
+  { id: "globetrotter", name: "Globetrotter", desc: "Visit every country on the map." },
+  { id: "takeover", name: "Corporate Raider", desc: "Take control of a company through a tender offer." },
   { id: "cash_10k", name: "First ₹10,000", desc: "Hold ₹10,000 cash." },
   { id: "cash_1l", name: "First ₹1 Lakh", desc: "Hold ₹1 lakh cash." },
   { id: "cash_1cr", name: "First ₹1 Crore", desc: "Reach ₹1 crore net worth." },

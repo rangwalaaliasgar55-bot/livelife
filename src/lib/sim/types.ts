@@ -1,4 +1,7 @@
 import type { AdvState, Forecast } from "./advanced";
+import type { InteractKind, LifeState } from "./life";
+import type { RouletteBet } from "./casino";
+import type { BizState } from "./biz";
 
 export type GameMode =
   | "normal"
@@ -88,7 +91,15 @@ export type EducationTrack =
   | "journalism"
   | "real_estate"
   | "science"
-  | "vocational";
+  | "vocational"
+  | "data_science"
+  | "cybersecurity"
+  | "nursing"
+  | "aviation"
+  | "hospitality"
+  | "psychology"
+  | "architecture"
+  | "robotics";
 
 export type RelationLevel = "friendly" | "cordial" | "neutral" | "tense" | "hostile";
 
@@ -117,7 +128,7 @@ export interface SkillMap {
 
 export interface EducationRecord {
   id: string;
-  level: "primary" | "secondary" | "vocational" | "college" | "university" | "certification" | "course" | "self";
+  level: "primary" | "secondary" | "vocational" | "college" | "university" | "masters" | "phd" | "certification" | "course" | "self";
   name: string;
   track: EducationTrack;
   institution: string;
@@ -130,6 +141,10 @@ export interface EducationRecord {
   gpa: number;
   completed: boolean;
   inProgress: boolean;
+  /** Professional certification id (level "certification"). */
+  certId?: string;
+  /** Tick the study started — progress is measured in months. */
+  startTick?: number;
 }
 
 export interface JobListing {
@@ -841,6 +856,10 @@ export interface GameState {
   successorUsed: boolean;
   adv?: AdvState;
   seedLabel?: string;
+  /** The BitLife layer: relationships, activities, assets, consequences. */
+  life?: LifeState;
+  /** Company HQs, finance firms, casino ops, estates, taxes, jobs market. */
+  biz?: BizState;
 }
 
 export interface NewGameInput {
@@ -939,7 +958,7 @@ export type PlayerAction =
   | { type: "minesReveal"; tile: number }
   | { type: "minesCashout" }
   | { type: "minesClear" }
-  | { type: "admin"; op: "unlock" | "lock" | "draw" | "status"; key?: string; amount?: number }
+  | { type: "admin"; op: "unlock" | "lock" | "draw" | "status" | "xray"; key?: string; amount?: number }
   | { type: "foundCasino"; name: string; cityId: string }
   | { type: "foundBank"; name: string }
   | { type: "foundInsurer"; name: string }
@@ -952,7 +971,50 @@ export type PlayerAction =
   | { type: "rest" }
   | { type: "workout" }
   | { type: "network" }
-  | { type: "createFund"; name: string; kind: FundIssue["kind"] };
+  | { type: "createFund"; name: string; kind: FundIssue["kind"] }
+  // --- life (BitLife layer)
+  | { type: "ageUp" }
+  | { type: "activity"; id: string }
+  | { type: "interact"; personId: string; kind: InteractKind; prenup?: boolean; wedding?: "small" | "big" }
+  | { type: "findLove"; where: "app" | "club" | "work" }
+  | { type: "askOut"; candidateId: string }
+  | { type: "adoptPet"; species: "dog" | "cat" | "parrot" | "horse" | "tortoise" }
+  | { type: "adoptChild" }
+  // --- lifestyle
+  | { type: "buyVehicle"; modelId: string }
+  | { type: "sellVehicle"; id: string }
+  | { type: "repairVehicle"; id: string }
+  | { type: "yachtCharter"; id: string }
+  | { type: "buyAircraft"; modelId: string }
+  | { type: "sellAircraft"; id: string }
+  | { type: "aircraftMode"; id: string; mode: "private" | "charter" | "lease" }
+  | { type: "aircraftCrew"; id: string; crew: boolean }
+  | { type: "maintainAircraft"; id: string }
+  | { type: "flyAircraft"; id: string; cityId: string }
+  | { type: "vacation"; cityId: string; tier: string; days: number; aircraftId?: string }
+  // --- corporate
+  | { type: "tenderOffer"; companyId: string; pct: number; premium: number; buyer: string }
+  | { type: "sellStake"; companyId: string; holderId: string; pct: number }
+  // --- casino floor
+  | { type: "bjStart"; stake: number }
+  | { type: "bjHit" }
+  | { type: "bjStand" }
+  | { type: "bjDouble" }
+  | { type: "rouletteSpin"; bets: RouletteBet[] }
+  | { type: "slotSpin"; stake: number }
+  | { type: "crashStart"; stake: number; auto?: number | null }
+  | { type: "crashCashout"; at: number }
+  | { type: "diceRoll"; stake: number; target: number; over: boolean }
+  | { type: "hiloStart"; stake: number }
+  | { type: "hiloGuess"; guess: "hi" | "lo" | "skip" }
+  | { type: "hiloCashout" }
+  | { type: "plinkoDrop"; stake: number; risk: "low" | "medium" | "high" }
+  | { type: "casinoClear"; game: "bj" | "crash" | "hilo" | "vp" | "baccarat" | "wheel" }
+  | { type: "baccaratDeal"; bets: { player?: number; banker?: number; tie?: number } }
+  | { type: "vpDeal"; stake: number }
+  | { type: "vpDraw"; holds: boolean[] }
+  | { type: "wheelSpin"; bets: Record<string, number> }
+  | { type: "biz"; op: string; id?: string; args?: Record<string, unknown> };
 
 export interface FoundPayload {
   name: string;

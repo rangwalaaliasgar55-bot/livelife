@@ -1,3 +1,4 @@
+import { getLife } from "./life";
 import {
   CITY_DEFS,
   COMPANY_PREFIX,
@@ -268,6 +269,7 @@ export function createGame(input: NewGameInput): GameState {
   state.seedLabel = seedLabel;
   applyScenario(state, input.scenarioId);
   state.adv = initAdv(state, seedLabel);
+  getLife(state);
   return state;
 }
 

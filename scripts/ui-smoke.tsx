@@ -8,6 +8,7 @@ import { createGame } from "../src/lib/sim/create";
 import { tickMonths } from "../src/lib/sim/engine";
 import type { GameState, PlayerAction } from "../src/lib/sim/types";
 import { MinesGame } from "../src/components/game/MinesGame";
+import { minesLayout } from "../src/lib/sim/mines";
 import { Panels } from "../src/components/game/panels";
 import { CashFlow } from "../src/components/game/panels2";
 import { SpeedControls, TreasuryModal } from "../src/components/game/overlays";
@@ -46,12 +47,26 @@ for (let i = 0; i < 6; i++) {
   tickMonths(state, 1);
 }
 applyAction(state, { type: "minesStart", stake: 50_000, mines: 5 });
-applyAction(state, { type: "minesReveal", tile: 0 });
+{
+  const m = state.adv!.mines!;
+  const bombs = minesLayout(m.seed, m.tiles, m.mines);
+  const safe = Array.from({ length: m.tiles }, (_, i) => i).find((i) => !bombs.includes(i))!;
+  applyAction(state, { type: "minesReveal", tile: safe });
+}
+// exercise the new surfaces so their views render real data
+applyAction(state, { type: "dev", op: "add_money", args: { amount: 2_000_000_000 } });
+applyAction(state, { type: "buyAircraft", modelId: "swift" });
+applyAction(state, { type: "buyVehicle", modelId: "daycruiser" });
+applyAction(state, { type: "bjStart", stake: 10_000 });
+applyAction(state, { type: "hiloStart", stake: 10_000 });
+applyAction(state, { type: "crashStart", stake: 10_000, auto: null });
+applyAction(state, { type: "rouletteSpin", bets: [{ kind: "red", amount: 5000 }] });
+applyAction(state, { type: "findLove", where: "app" });
 
 const VIEWS = [
   "life", "career", "staff", "bank", "markets", "property", "business", "opps", "world",
   "politics", "concord", "media", "under", "analysis", "cashflow", "research", "stats",
-  "calendar", "news", "legacy",
+  "calendar", "news", "legacy", "mylife", "casino", "lifestyle", "takeovers",
 ];
 
 for (const view of VIEWS) {
@@ -83,6 +98,25 @@ check("treasury asks for the key when locked", /admin key/i.test(locked));
 applyAction(state, { type: "admin", op: "unlock", key: process.env.NEXT_PUBLIC_ADMIN_KEY ?? "aurelion-admin" });
 const unlocked = renderToStaticMarkup(<TreasuryModal state={state} act={act} onClose={() => {}} />);
 check("treasury offers draws once unlocked", /Draw/.test(unlocked) && /Lock the treasury/.test(unlocked));
+check("treasury offers the casino x-ray (on by default for the owner)", /X-ray ON/.test(unlocked));
+
+// Mines x-ray: invisible to players, visible to the admin. Unlocking turns it on;
+// the 👁 toggle on the board (admin only) switches it off and on again.
+const MARK = /hover:border-rose-300\/80/g;
+const marks = (html: string) => (html.match(MARK) ?? []).length;
+if (!state.adv!.mines || state.adv!.mines.status !== "live") applyAction(state, { type: "minesStart", stake: 10_000, mines: 5 });
+const xr = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
+check("admin x-ray marks every mine", marks(xr) === state.adv!.mines!.mines);
+check("admin sees the x-ray toggle", /Toggle admin x-ray/.test(xr));
+applyAction(state, { type: "admin", op: "xray" });
+const off = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
+check("toggling x-ray off hides the mines", marks(off) === 0);
+applyAction(state, { type: "admin", op: "xray" });
+check("toggling x-ray back on shows them", marks(renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />)) === state.adv!.mines!.mines);
+applyAction(state, { type: "admin", op: "lock" });
+const relocked = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
+check("locking the treasury switches x-ray off", marks(relocked) === 0);
+check("players never see the x-ray toggle", !/Toggle admin x-ray/.test(relocked));
 
 console.log(failures === 0 ? "\nUI SMOKE: ALL CHECKS PASSED" : `\nUI SMOKE: ${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -11,6 +11,7 @@ import { chance, clamp, formatDate, formatINR, pick, pushCap, round, uid } from 
 import { credit, liquidCash, money, monthlyLoanPayment, portfolioValue, propertyValue, runwayMonths, spend, totalDebt, computeNetWorth } from "./finance";
 import { minesView, type MinesSession } from "./mines";
 import { rng } from "./engine";
+import { groupStakes, lifestyleAssets } from "./finance";
 
 /* ------------------------------------------------------------------ types */
 
@@ -119,6 +120,8 @@ export interface AdminState {
   draws: number;
   totalDrawn: number;
   lastDraw?: string;
+  /** Owner-only casino x-ray: see mine positions, crash points, hole cards. */
+  xray?: boolean;
 }
 
 export interface AdvState {
@@ -541,6 +544,12 @@ const FLOW_LABELS: Record<string, string> = {
   media: "Media advertising",
   mediaCosts: "Newsroom costs",
   casino: "Casino floor",
+  charter: "Charter & lease income",
+  lifeIncome: "Gifts, windfalls & sales",
+  stakes: "Stake purchases & sales",
+  life: "Life & lifestyle spending",
+  aviation: "Cars, yachts & aircraft",
+  travel: "Travel & vacations",
   gambling: "Gambling",
   crime: "Underground",
   forecast: "Forecasts & insights",
@@ -555,10 +564,32 @@ const FLOW_LABELS: Record<string, string> = {
   advisors: "Advisors & staff",
   fees: "Bank & late fees",
   arrears: "Unpaid (arrears)",
+  taxReturn: "Tax return & tax debt",
+  gifts: "Gifts given",
+  benefits: "Unemployment benefit",
+  pension: "State pension",
+  estateFees: "Property managers",
+  estateRepairs: "Repairs, legal & fines",
+  fdInterest: "Fixed-deposit interest",
+  fdMoves: "Fixed deposits opened/closed",
+  brokerMoves: "Broker account in/out",
+  bankDiv: "Dividends from your bank",
+  hqDividends: "Dividends from your companies",
+  brokerage: "Your brokerage firm",
+  casinoCapex: "Casino fit-out & sales",
+  unitSales: "Property & unit sales",
 };
 
 const INCOME_KEYS = new Set([
   "salary", "freelance", "rent", "dividends", "coupons", "interest", "draws", "grants", "media", "casino", "gambling", "crime", "forecast",
+  "charter", "lifeIncome",
+  "benefits",
+  "pension",
+  "fdInterest",
+  "bankDiv",
+  "hqDividends",
+  "brokerage",
+  "unitSales",
 ]);
 
 export const flowLabel = (key: string) => FLOW_LABELS[key] ?? key;
@@ -1244,6 +1275,8 @@ export function whyNetWorth(state: GameState): string[] {
       const sh = c.shareholders.find((x) => x.type === "player");
       return sh && c.shares > 0 ? s + (sh.shares / c.shares) * Math.max(0, c.valuation) : s;
     }, 0))}`,
+    `Stakes held by your companies: ${formatINR(groupStakes(state))}`,
+    `Cars, yachts & aircraft: ${formatINR(lifestyleAssets(state))}`,
     `− Debt: ${formatINR(totalDebt(p))}`,
   ];
   const flow = adv.monthFlow;

@@ -52,9 +52,50 @@ export function propertyValue(p: Player): number {
   return p.properties.reduce((s, x) => s + money(x.value), 0);
 }
 
+/** Cars, yachts and aircraft at their current (depreciated) value. */
+export function lifestyleAssets(state: GameState): number {
+  const L = state.life;
+  if (!L) return 0;
+  return (L.vehicles ?? []).reduce((s, v) => s + money(v.value), 0) + (L.aircraft ?? []).reduce((s, a) => s + money(a.value), 0);
+}
+
+/** Stakes held by companies you control, at your share of the holder. */
+export function groupStakes(state: GameState): number {
+  const owned = new Set(state.player.ownedCompanyIds);
+  if (!owned.size) return 0;
+  let v = 0;
+  for (const co of state.world.companies) {
+    if (co.shares <= 0) continue;
+    for (const s of co.shareholders) {
+      if (s.type === "player" || !owned.has(s.id) || s.id === co.id) continue;
+      const holder = state.world.companies.find((c) => c.id === s.id);
+      const mine = holder?.shareholders.find((x) => x.type === "player");
+      if (!holder || !mine || holder.shares <= 0) continue;
+      v += (money(s.shares) / co.shares) * Math.max(0, money(co.valuation)) * (money(mine.shares) / holder.shares);
+    }
+  }
+  return v;
+}
+
+/** Things you run for real, at conservative book value: fixed deposits, money
+ *  with your broker, your bank's capital, your brokerage, your casinos — less
+ *  any unpaid tax. Read straight off state so this file stays import-free. */
+export function ventureAssets(state: GameState): number {
+  const b = state.biz;
+  if (!b) return 0;
+  let v = 0;
+  for (const fd of b.fds ?? []) v += money(fd.principal) + money(fd.accrued);
+  if (b.broker) v += Math.max(0, money(b.broker.value));
+  for (const bank of state.world.banks) if (bank.playerOwned) v += Math.max(0, money(bank.capital));
+  for (const f of b.brokerages ?? []) v += Math.max(0, money(f.cash)) + money(f.aum) * 0.01;
+  for (const c of state.world.casinos) v += money(b.casinos?.[c.id]?.assetValue);
+  return v - money(b.taxDebt);
+}
+
 export function computeNetWorth(state: GameState): number {
   const p = state.player;
-  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) - totalDebt(p);
+  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) + lifestyleAssets(state) + groupStakes(state) +
+    ventureAssets(state) - totalDebt(p);
 }
 
 export function recordNetWorth(state: GameState) {

@@ -8,6 +8,8 @@ const isStatic = process.env.STATIC_EXPORT === "1";
 const nextConfig: NextConfig = {
   output: isStatic ? "export" : undefined,
   images: { unoptimized: true },
+  // Dev-only: let hosted previews (e.g. sandbox preview domains) load dev assets.
+  allowedDevOrigins: ["*.e2b.app"],
 };
 
 export default nextConfig;

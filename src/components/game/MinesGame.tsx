@@ -4,7 +4,8 @@
 // with the odds of the next tile and the cash-out value shown before you click.
 // Mine positions come from a seed generated when the round starts, so the board
 // is fixed before your first click and cannot be re-rolled to save you.
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { xrayOn } from "@/lib/sim/debug";
 import { getAdv } from "@/lib/sim/advanced";
 import { liquidCash } from "@/lib/sim/finance";
 import { MINES_HOUSE_EDGE, MINES_PRESETS, MINES_TILES, minesLayout, minesView } from "@/lib/sim/mines";
@@ -23,12 +24,25 @@ export function MinesGame({ state, act, busy }: { state: GameState; act: (a: Pla
   const v = sess ? minesView(sess) : null;
   const layout = sess ? minesLayout(sess.seed, sess.tiles, sess.mines) : [];
   const cash = liquidCash(state.player);
+  // Owner-only x-ray: mine positions shown as a faint mark only the admin sees.
+  const xray = xrayOn(state);
+  const admin = Boolean(state.adv?.admin?.unlocked);
+  const taps = useRef<number[]>([]);
+  const secretTap = () => {
+    if (!admin) return;
+    const now = Date.now();
+    taps.current = [...taps.current.filter((t) => now - t < 1200), now];
+    if (taps.current.length >= 3) {
+      taps.current = [];
+      act({ type: "admin", op: "xray" });
+    }
+  };
 
   const tileFace = (t: number) => {
     if (!sess || !v) return "?";
     const opened = sess.revealed.includes(t);
     const isBomb = layout.includes(t);
-    if (sess.status === "live") return opened ? "◆" : "";
+    if (sess.status === "live") return opened ? "◆" : xray && isBomb ? <span className="text-base leading-none text-rose-400/90 drop-shadow">✕</span> : "";
     if (opened) return "◆";
     if (isBomb) return t === sess.bustTile ? "✸" : "✱";
     return "";
@@ -39,6 +53,7 @@ export function MinesGame({ state, act, busy }: { state: GameState; act: (a: Pla
     const opened = sess.revealed.includes(t);
     const isBomb = layout.includes(t);
     if (sess.status === "live") {
+      if (!opened && xray && isBomb) return "border-rose-400/60 bg-rose-500/15 hover:border-rose-300/80 hover:bg-rose-500/25";
       return opened
         ? "border-teal-300/50 bg-teal-300/15 text-teal-200"
         : "border-white/10 bg-white/5 hover:border-amber-200/40 hover:bg-amber-200/10";
@@ -51,12 +66,26 @@ export function MinesGame({ state, act, busy }: { state: GameState; act: (a: Pla
   return (
     <div className="rounded-2xl border border-white/10 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Label>Mines · 5×5 · played tile by tile</Label>
+        <button onClick={secretTap} className="cursor-default select-none text-left">
+          <Label>Mines · 5×5 · played tile by tile{xray ? " ·" : ""}</Label>
+        </button>
+        <span className="flex items-center gap-2">
         {v && sess ? (
           <span className="text-xs text-[var(--muted)]">
             {sess.mines} mines · stake {formatINR(sess.stake)}
           </span>
         ) : null}
+          {admin ? (
+            <button
+              onClick={() => act({ type: "admin", op: "xray" })}
+              title={xray ? "Admin x-ray on — mines marked ✕ (only you see this)" : "Admin x-ray off"}
+              aria-label="Toggle admin x-ray"
+              className={`rounded-full border px-2 py-0.5 text-xs ${xray ? "border-rose-400/60 bg-rose-500/15 text-rose-200" : "border-white/15 text-[var(--muted)]"}`}
+            >
+              {xray ? "👁 x-ray" : "👁"}
+            </button>
+          ) : null}
+        </span>
       </div>
 
       {!sess ? (
