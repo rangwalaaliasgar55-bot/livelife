@@ -10,6 +10,7 @@
 import type { BankInst, Decision, GameState } from "./types";
 import { bizFlow, getBiz, type BankOps, type Brokerage, type BrokerTier, type FixedDeposit, type PersonalBroker } from "./biz";
 import { credit, money, spend, spendUpTo } from "./finance";
+import { liquidCash } from "./finance";
 import { history, news, note, timeline, unlock } from "./feed";
 import { ledger } from "./advanced";
 import { rng } from "./engine";
@@ -33,10 +34,12 @@ export function getBankOps(state: GameState, b: BankInst): BankOps {
       lendingRate: mkt.lending,
       risk: 35,
       auto: true,
+      marketingAuto: true,
+      ceoAuto: true,
       staff: Math.max(3, Math.round((b.deposits + b.loans) / 1.5e8 + b.branches * 3)),
-      marketing: 0,
+      marketing: Math.round(b.deposits*0.0015 + b.branches*15000),
       dividendPct: 0.4,
-      trust: 55,
+      trust: 65,
       warnings: 0,
       last: null,
       history: [],
@@ -73,6 +76,18 @@ function tickOneBank(state: GameState, b: BankInst) {
     // treasury desk reprices to the market each month
     ops.depositRate = mkt.deposit;
     ops.lendingRate = mkt.lending;
+  }
+  if (ops.marketingAuto) {
+    const autoMkt = Math.round(b.deposits*0.0015 + b.branches*15000 + b.loans*0.0006);
+    ops.marketing = clamp(Math.round(ops.marketing*0.9 + autoMkt*0.1), 0, 1e10);
+  }
+  if (ops.ceoAuto) {
+    // free CEO keeps staffing sane and ratio healthy — no extra fee
+    const need = staffNeed(b);
+    if (ops.staff < need) ops.staff = need;
+    if (ops.staff > need*1.4) ops.staff = Math.ceil(need*1.25);
+    if (capitalRatio(b, ops) < 0.13 && ops.risk > 28) ops.risk = Math.max(28, ops.risk - 2);
+    if (ops.trust < 60) ops.trust = clamp(ops.trust + 0.6, 0, 100);
   }
   const service = clamp(ops.staff / staffNeed(b), 0.3, 1.3);
   const mktEff = Math.min(0.03, (ops.marketing / Math.max(1e6, b.deposits)) * 0.6);
@@ -267,30 +282,58 @@ export function bankSet(
     }
     ops.staff = n;
   }
-  if (patch.marketing != null) ops.marketing = clamp(Math.round(patch.marketing), 0, 1e10);
+  if (patch.marketing != null) { ops.marketing = clamp(Math.round(patch.marketing), 0, 1e10); ops.marketingAuto = false; }
+  if ((patch as any).marketingAuto != null) {
+    ops.marketingAuto = Boolean((patch as any).marketingAuto);
+    if (ops.marketingAuto) ops.marketing = Math.round(Math.max(ops.marketing, b.deposits*0.0015 + b.branches*15000));
+  }
+  if ((patch as any).ceoAuto != null) ops.ceoAuto = Boolean((patch as any).ceoAuto);
   if (patch.dividendPct != null) ops.dividendPct = clamp(patch.dividendPct > 1 ? patch.dividendPct / 100 : patch.dividendPct, 0, 1);
   const mkt = bankMarket(state, b);
   log.push(
-    `${b.name}: deposits ${ops.depositRate}% (market ${mkt.deposit}%), loans ${ops.lendingRate}% (market ${mkt.lending}%), risk ${ops.risk}, ${ops.staff} staff (need ≈${staffNeed(b)}), dividends ${Math.round(ops.dividendPct * 100)}%${ops.auto !== false ? ", rates auto-track the market" : ""}.`,
+    `${b.name}: deposits ${ops.depositRate}% (market ${mkt.deposit}%), loans ${ops.lendingRate}% (market ${mkt.lending}%), risk ${ops.risk}, ${ops.staff} staff (need ≈${staffNeed(b)}), marketing ${formatINR(ops.marketing)}/mo${ops.marketingAuto?" (auto)":""}, dividends ${Math.round(ops.dividendPct * 100)}%${ops.auto !== false ? ", rates auto-track" : ""}${ops.ceoAuto?", CEO auto-manages":""}.`,
   );
 }
 
 export function bankBranch(state: GameState, bankId: string, delta: number, log: string[]) {
   const b = state.world.banks.find((x) => x.id === bankId && x.playerOwned);
   if (!b) return;
-  if (delta > 0) {
-    const cost = 5_000_000;
-    if (b.capital < cost * 2) {
-      log.push("The bank's capital is too thin to fund a new branch.");
-      return;
+  const ops = getBankOps(state, b);
+  const d = Math.round(delta);
+  if (d === 0) return;
+  if (d > 0) {
+    const costEach = 5_000_000;
+    const cost = costEach * d;
+    // unlimited branches: try bank capital first, then let owner top-up from own cash
+    if (b.capital >= cost) {
+      b.capital -= cost;
+      b.branches += d;
+      ops.trust = clamp(ops.trust + Math.min(6, d), 0, 100);
+      log.push(`Opened ${d} branch${d>1?"es":""} (#${b.branches - d + 1}→#${b.branches}, ${formatINR(cost)} fit-out @ ${formatINR(costEach)}/each). Branches pull in deposits; each costs ₹1.5L/month and wants ~3 staff.`);
+    } else {
+      const short = cost - b.capital;
+      if (liquidCash(state.player) >= short || b.capital>0) {
+        // auto crank: take what bank has, top up rest from player
+        const fromBank = Math.min(b.capital, cost);
+        const need = cost - fromBank;
+        if (need>0 && !spend(state.player, need, `Branch fit-out · ${b.name}`, "biz", dt(state))) { log.push(`Need ${formatINR(cost)} to open ${d} branch${d>1?"es":""} (bank has ${formatINR(b.capital)}, you need ${formatINR(need)} more). Inject capital or open fewer.`); return; }
+        if (need>0) bizFlow(state, "stakes", -need);
+        b.capital -= fromBank;
+        b.branches += d;
+        log.push(`Opened ${d} branch${d>1?"es":""} — bank paid ${formatINR(fromBank)}, you topped up ${formatINR(need)}. Total #${b.branches}.`);
+      } else { log.push(`Need ${formatINR(cost)} to open ${d} branch${d>1?"es":""} (bank has ${formatINR(b.capital)}).`); return; }
     }
-    b.capital -= cost;
-    b.branches += 1;
-    log.push(`Opened branch #${b.branches} (${formatINR(cost)} fit-out). Branches pull in deposits; each costs ₹1.5L/month and wants ~3 staff.`);
-  } else if (b.branches > 1) {
-    b.branches -= 1;
-    getBankOps(state, b).trust -= 2;
-    log.push("Closed a branch.");
+    // auto marketing scales: if marketingAuto, bump it
+    if (ops.marketingAuto) ops.marketing = Math.round(Math.max(ops.marketing, b.deposits*0.0015 + b.branches*15000));
+  } else {
+    const close = Math.min(-d, b.branches - 1);
+    if (close <=0) { log.push("Cannot close your last branch."); return; }
+    b.branches -= close;
+    ops.trust = clamp(ops.trust - close*1.2, 0, 100);
+    // recover 30% of fit-out as salvage
+    const salvage = close * 1_500_000;
+    b.capital += salvage;
+    log.push(`Closed ${close} branch${close>1?"es":""}. Salvage ${formatINR(salvage)} returned to capital. Branches now ${b.branches}.`);
   }
 }
 

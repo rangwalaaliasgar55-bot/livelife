@@ -1842,9 +1842,10 @@ function buyAICompany(state: GameState, companyId: string, log: string[]) {
 function buyGovHelp(state: GameState, kind: "relief"|"land"|"contract", log: string[]) {
   const country = state.world.countries.find(c=>c.id===state.player.countryId)!;
   if (kind==="relief") {
-    const cost = 400000;
-    if (!spend(state.player, cost, "Government liaison · relief", "politics", date(state))) { log.push(`Need ${formatINR(cost)} to lobby.`); return; }
-    const relief = Math.round(600000 + rng(state)*800000);
+    const cost = 220000;
+    if (!spend(state.player, cost, "Government liaison · relief", "politics", date(state))) { log.push(`Need ${formatINR(cost)} to lobby (cut to help you).`); return; }
+    const patrons = (state.player.politics as any).patrons||0;
+    const relief = Math.round((900000 + rng(state)*1100000) * (1 + patrons*0.018));
     credit(state.player, relief, `Government relief · ${country.name}`, "gov", date(state));
     state.player.reputation.political = clamp(state.player.reputation.political+4, 0, 100);
     log.push(`Government sanctioned ${formatINR(relief)} relief after your liaison work (net +${formatINR(relief-cost)}). Helping the government pays.`);
@@ -1869,32 +1870,62 @@ function buyGovHelp(state: GameState, kind: "relief"|"land"|"contract", log: str
 function buyPartyMember(state: GameState, partyId: string, log: string[]) {
   const party = state.world.parties.find(p=>p.id===partyId);
   if (!party) { log.push("No such party."); return; }
-  const cost = 250000;
-  if (!spend(state.player, cost, `Support · ${party.name}`, "politics", date(state))) { log.push(`Need ${formatINR(cost)} to enrol patrons.`); return; }
-  (state.player.politics as any).patrons = ((state.player.politics as any).patrons||0)+5;
-  party.members += 800;
-  state.player.politics.popularity = clamp(state.player.politics.popularity+3, 0, 95);
-  state.player.influence.political = clamp(state.player.influence.political+4, 0, 100);
-  log.push(`Patronised 5 influential members of ${party.name} (+800 party workers). Popularity +, political influence +, policy leverage next cycle.`);
+  const cost = 120000;
+  if (!spend(state.player, cost, `Support · ${party.name}`, "politics", date(state))) { log.push(`Need ${formatINR(cost)} to enrol patrons (cheaper now to help you rule).`); return; }
+  (state.player.politics as any).patrons = ((state.player.politics as any).patrons||0)+12;
+  party.members += 2500;
+  party.seats = Math.min(party.seats + 3, 300);
+  state.player.politics.popularity = clamp(state.player.politics.popularity+6, 0, 98);
+  state.player.influence.political = clamp(state.player.influence.political+8, 0, 100);
+  state.player.reputation.political = clamp(state.player.reputation.political+5, 0, 100);
+  // supportive politics: every patronage also boosts all policy directions and reduces heat
+  (state.player.politics as any).heat = clamp(((state.player.politics as any).heat||0) - 4, 0, 100);
+  log.push(`Patronised 12 influential members of ${party.name} (+2,500 workers, +3 seats). Popularity +6, political influence +8, heat -4 — politics now strongly supports your rise.`);
+  // if you keep buying you can rule whole country quickly
+  if (((state.player.politics as any).patrons||0) >= 40) {
+    state.player.politics.popularity = clamp(state.player.politics.popularity+4, 0, 98);
+    log.push("Your patron network is now dominant — elections tilt your way, opposition demoralised.");
+  }
 }
 
 function hireSecurity(state: GameState, level: number, log: string[]) {
-  if (state.player.politics.role!=="head") { log.push("Only a sitting Head of Government can command full state security."); return; }
-  const cost = level*180000;
-  if (!spend(state.player, cost, "State security detail", "politics", date(state))) { log.push(`Need ${formatINR(cost)} for security upgrade.`); return; }
-  (state.player.politics as any).security = clamp(((state.player.politics as any).security||0)+level*18, 0, 100);
-  log.push(`Security detail level ${(state.player.politics as any).security}/100. Scandals are suppressed, heat decays, and at 80+ you attain FULL POWER to push any policy.`);
+  // Make politics more supportive: allow hiring security earlier and cheaper, even as minister/candidate
+  if (state.player.politics.role==="none") { log.push("Join a party and stand for office first — then you can build a security detail."); return; }
+  const cost = level*90000;
+  if (!spend(state.player, cost, "State security detail", "politics", date(state))) { log.push(`Need ${formatINR(cost)} for security upgrade (half price to help you).`); return; }
+  (state.player.politics as any).security = clamp(((state.player.politics as any).security||0)+level*22, 0, 100);
+  (state.player.politics as any).heat = clamp(((state.player.politics as any).heat||0) - level*6, 0, 100);
+  log.push(`Security detail level ${(state.player.politics as any).security}/100 (+${level*22}). Heat -${level*6}, scandals suppressed, opposition intimidated. At 65+ you can claim FULL POWER (lowered to help you rule).`);
 }
 
 function assumePower(state: GameState, log: string[]) {
-  if (state.player.politics.role!=="head") { log.push("You are not Head of Government."); return; }
+  const role = state.player.politics.role;
+  if (role==="none") { log.push("Enter politics first."); return; }
+  if (role!=="head") {
+    // supportive: allow powerful ministers to coup with patron network
+    const patrons = (state.player.politics as any).patrons||0;
+    if (patrons>=30 && ((state.player.politics as any).security||0) >= 55) {
+      state.player.politics.role = "head" as any;
+      log.push("With your patron network and security, you vaulted to Head of Government — politics supports the strong.");
+    } else { log.push("You are not yet Head. Need patronage 30+ and security 55+ to take charge, or win the election normally."); return; }
+  }
   const sec = (state.player.politics as any).security||0;
   const pop = state.player.politics.popularity;
-  if (sec<80 || pop<62) { log.push(`Need security 80+ and popularity 62+ (you: sec ${sec}, pop ${pop.toFixed(0)}). Keep campaigning and fund security.`); return; }
+  const patrons = (state.player.politics as any).patrons||0;
+  const needSec = 65, needPop = 52;
+  if (sec<needSec || pop<needPop) {
+    // allow patronage to compensate
+    if (patrons>=50 && sec>=50) { /* pass */ }
+    else { log.push(`Need security ${needSec}+ and popularity ${needPop}+ (you: sec ${sec}, pop ${pop.toFixed(0)}, patrons ${patrons}). Thresholds lowered and patronage helps — buy more members or fund security.`); return; }
+  }
   (state.player.politics as any).fullPower = true;
-  log.push(`FULL POWER assumed. You can now set any tax/welfare/business/education policy instantly, appoint ministers, and your government has full state apparatus.`);
-  timeline(state, "Assumed full power as Head of Government.", "politics");
-  note(state, "You now rule with full security and full power.", "good");
+  // also grant country-wide rule flags: set security 100, popularity 90
+  (state.player.politics as any).security = 100;
+  state.player.politics.popularity = clamp(Math.max(pop, 88), 0, 100);
+  state.player.influence.political = 100;
+  log.push(`FULL POWER assumed — you now RULE the whole country. Every policy, ministry and state apparatus is yours. Taxes, welfare, business and education bow to you.`);
+  timeline(state, "Assumed FULL POWER — now ruling the whole country.", "politics");
+  note(state, "You now rule with full security and full power — the country is yours.", "good");
 }
 
 function foundMedia(state: GameState, kind: string, name: string, log: string[]) {

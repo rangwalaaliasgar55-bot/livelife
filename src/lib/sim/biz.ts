@@ -36,6 +36,8 @@ export interface CompanyHQ {
   corpDecisionTick: number;
   /** Last month a cash-crunch decision was raised. */
   crunchTick?: number;
+  /** CEO auto-manage whole company (free CEO) — hires, pay, agents, expansions, suggestions */
+  ceoAuto?: boolean;
   /** Months in a row payroll bounced. */
   bounced?: number;
   disruption?: { months: number; hit: number };
@@ -99,6 +101,10 @@ export interface BankOps {
   }[];
   /** Rates follow the market automatically until you set them by hand. */
   auto?: boolean;
+  /** When true, bank marketing auto-scales with deposits/branches. */
+  marketingAuto?: boolean;
+  /** CEO auto-pilot for the bank (like Company HQ) — keeps trust & ratio healthy. */
+  ceoAuto?: boolean;
 }
 
 export type BrokerTier = "junior" | "senior" | "star";
@@ -246,6 +252,9 @@ export interface EstateOps {
   } | null;
   log: { t: string; text: string }[];
   lastMonth: { rent: number; fee: number; repairs: number; net: number } | null;
+  /** When true, rent auto-tracks market and developer/title upkeep is fully handled. */
+  autoRent?: boolean;
+  fullAuto?: boolean;
 }
 
 export interface DevProject {

@@ -119,9 +119,9 @@ export function getHQ(state: GameState, co: ListedCompany): CompanyHQ {
       roles,
       agents: { eng: 0, sales: 0, ops: 0 },
       pay: "market",
-      morale: 62,
+      morale: 72,
       strategy: "steady",
-      payout: 0.3,
+      payout: 0.35,
       markets: [],
       rpe: 0,
       integration: null,
@@ -130,7 +130,8 @@ export function getHQ(state: GameState, co: ListedCompany): CompanyHQ {
       lastReport: null,
       log: [],
       corpDecisionTick: state.ticks,
-    };
+      ceoAuto: true,
+    } as CompanyHQ;
     b.hq[co.id] = hq;
     const wage = cityOf(state, co)?.avgWage ?? 800000;
     // productivity calibrated so an existing business isn't wrecked by the takeover
@@ -140,6 +141,9 @@ export function getHQ(state: GameState, co: ListedCompany): CompanyHQ {
   hq.agents ??= { eng: 0, sales: 0, ops: 0 };
   hq.markets ??= [];
   hq.log ??= [];
+  if ((hq as any).ceoAuto == null) (hq as any).ceoAuto = true;
+  if (hq.morale < 58) hq.morale = clamp(hq.morale + 8, 0, 100);
+  // undo previous erroneous duplicate ceoFreeDiscount var if any
   return hq;
 }
 
@@ -184,7 +188,56 @@ export function capacityOf(state: GameState, co: ListedCompany, hq = getHQ(state
 }
 
 export function payrollOf(state: GameState, co: ListedCompany, hq = getHQ(state, co)): number {
-  return ROLE_IDS.reduce((s, r) => s + hq.roles[r].count * roleSalary(state, co, r, hq.pay), 0);
+  const base = ROLE_IDS.reduce((s, r) => s + hq.roles[r].count * roleSalary(state, co, r, hq.pay), 0);
+  const free = (hq as CompanyHQ & { ceoAuto?: boolean }).ceoAuto ? roleSalary(state, co, "mgmt", hq.pay) : 0;
+  return Math.max(0, base - free);
+}
+
+export function hqCeoToggle(state: GameState, coId: string, on: boolean, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===coId && state.player.ownedCompanyIds.includes(c.id));
+  if (!co) { log.push("Not your company."); return; }
+  const hq = getHQ(state, co);
+  (hq as any).ceoAuto = on;
+  log.push(on ? `${co.name}: CEO auto-pilot ON — free CEO now runs hiring, pay, agents and expansions for you (and whispers which companies to buy).` : `${co.name}: CEO auto-pilot OFF — you run it by hand.`);
+}
+
+export function hqCeoBuy(state: GameState, coId: string, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===coId && state.player.ownedCompanyIds.includes(c.id));
+  if (!co) { log.push("Not your company."); return; }
+  const suggestion = ceoSuggestion(state, coId);
+  if (!suggestion) { log.push("CEO: nothing worth buying right now — hold cash and grow organically. Keep expanding cities and raising revenue."); return; }
+  log.push(`CEO recommends buying ${suggestion.name} (${suggestion.industry}) for ${formatINR(suggestion.valuation)} — revenue ${formatINR(suggestion.revenue)} — cheap and strategic. One click to close.`);
+  // CEO tries cash first, then debt, then stock — free CEO handles the board & regulators
+  hqAcquire(state, coId, suggestion.id, 16, "cash", log);
+  const last = log[log.length-1] || "";
+  if (last.includes("needs") && last.includes("cash")) {
+    hqAcquire(state, coId, suggestion.id, 16, "debt", log);
+  } else if (last.includes("rejected") || last.includes("blocked")) {
+    hqAcquire(state, coId, suggestion.id, 26, "debt", log);
+    if (log[log.length-1]?.includes("rejected")) hqAcquire(state, coId, suggestion.id, 32, "stock", log);
+  }
+}
+
+export function ceoSuggestion(state: GameState, coId: string): ListedCompany | null {
+  const co = state.world.companies.find(c=>c.id===coId);
+  if (!co) return null;
+  // CEO only suggests targets you can actually afford (cash + 80% debt capacity + player top-up) — truly free CEO does the homework
+  const affordCap = co.cash*1.9 + debtCapacity(co)*0.85 + 2_000_000;
+  let pool = state.world.companies.filter(c=>c.id!==coId && c.stage!=="bankrupt" && c.valuation>0 && c.valuation < affordCap && !state.player.ownedCompanyIds.includes(c.id));
+  if (!pool.length) pool = state.world.companies.filter(c=>c.id!==coId && c.stage!=="bankrupt" && c.valuation>0 && !state.player.ownedCompanyIds.includes(c.id) && c.valuation < affordCap*3);
+  if (!pool.length) return null;
+  let best: ListedCompany | null = null;
+  let bestScore = -1e18;
+  for (const cand of pool) {
+    const cheap = cand.revenue / Math.max(1, cand.valuation);
+    const same = cand.industry===co.industry ? 1.85 : 1.0;
+    const affordable = cand.valuation < co.cash*1.2 + debtCapacity(co)*0.6 ? 1.35 : 1.0;
+    const small = cand.valuation < co.valuation*0.6 ? 1.32 : 1.0;
+    const sentimentPenalty = cand.sentiment > 75 ? 0.96 : 1.0;
+    const score = cheap*1400*same*affordable*small*sentimentPenalty + (cand.valuation<1.2e9 ? 420:0) - Math.log10(Math.max(1,cand.valuation))*8;
+    if (score>bestScore) { bestScore=score; best=cand; }
+  }
+  return best;
 }
 
 export function aiBillOf(state: GameState, co: ListedCompany, hq = getHQ(state, co)) {
@@ -284,6 +337,45 @@ export function hqPost(
   parts: { marketing: number; rd: number; interest: number; tax: number },
 ) {
   const hq = getHQ(state, co);
+  // --- FREE CEO AUTO-MANAGES whole company when enabled
+  if ((hq as any).ceoAuto) {
+    // Keep pay at market (stable), morale-friendly
+    if (hq.pay === "below" && hq.morale < 62) hq.pay = "market" as any;
+    // Auto-set headcount targets to ~ 92% of capacity vs demand — growing when demand>capacity
+    const wf = effectiveWorkforce(state, co, hq);
+    const cap = capacityOf(state, co, hq);
+    const neededEff = Math.max(1, demand * 0.97);
+    const ratio = cap > 1 ? neededEff / cap : 1;
+    if (ratio > 1.08) {
+      for (const r of (["eng","sales","ops"] as RoleId[])) hq.roles[r].target = clamp(Math.round(hq.roles[r].target * 1.14 + 2), 1, 50000);
+      hq.roles.mgmt.target = clamp(Math.round((headcount(hq) / 8) + 1), 1, 8000);
+    } else if (ratio < 0.72 && headcount(hq) > 12) {
+      for (const r of (["eng","sales","ops"] as RoleId[])) hq.roles[r].target = clamp(Math.round(hq.roles[r].target * 0.94), 1, 50000);
+    }
+    // Bottleneck fix
+    if (wf.bottleneck) {
+      const bn = wf.bottleneck as RoleId;
+      if (hq.roles[bn].target < hq.roles[bn].count + 4) hq.roles[bn].target = hq.roles[bn].count + 6;
+    }
+    // Auto deploy a few agents where it pays (up to 35% share)
+    for (const r of (["ops","sales","eng"] as Exclude<RoleId,"mgmt">[])) {
+      const curShare = hq.agents[r] / Math.max(1, hq.roles[r].count + hq.agents[r]);
+      if (curShare < 0.28 && state.world.tech.ai > 38 && r==="ops") hq.agents[r] = Math.min(20000, hq.agents[r] + 1);
+      if (curShare < 0.18 && state.world.tech.ai > 55 && r!=="ops") hq.agents[r] = Math.min(8000, hq.agents[r] + 1);
+    }
+    // Never let morale crater
+    if (hq.morale < 60 && hq.pay !== "above") hq.pay = "market" as any;
+    // Auto expand to biggest city if cash rich
+    if (co.cash > co.revenue*0.55 && co.cash > 8_000_000 && hq.markets.length < 6 && state.world.cities.length) {
+      const cities = state.world.cities.filter(c=>c.id!==co.cityId && !hq.markets.some(m=>m.cityId===c.id)).sort((a,b)=>b.population-a.population);
+      const c2 = cities[0];
+      if (c2 && co.cash > expansionCost(state, co, c2.id)*1.6) {
+        const before = co.cash;
+        hqExpand(state, co.id, c2.id, [], 0.9);
+        if (co.cash !== before) { /* expanded */ }
+      }
+    }
+  }
   const b = getBiz(state);
   const city = cityOf(state, co);
   const country = state.world.countries.find((c) => c.id === co.countryId);

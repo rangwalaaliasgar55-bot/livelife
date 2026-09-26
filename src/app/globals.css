@@ -84,3 +84,29 @@ body {
   background: #2a3142;
   border-radius: 99px;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3142 transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+button, input, select, a {
+  transition: all 0.18s ease;
+}
+
+.panel {
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease;
+}
+
+.panel:hover {
+  box-shadow: 0 22px 56px rgba(0,0,0,0.42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
