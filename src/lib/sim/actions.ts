@@ -377,6 +377,36 @@ export function applyAction(state: GameState, action: PlayerAction): { state: Ga
       case "socialPost":
         socialPost(state, action.platform, action.topic, action.spend, log);
         break;
+      case "socialGrow":
+        socialGrow(state, action.platform, log);
+        break;
+      case "hireSocial":
+        hireSocial(state, action.role, log);
+        break;
+      case "fireSocial":
+        fireSocial(state, action.handlerId, log);
+        break;
+      case "foundAgency":
+        foundAgency(state, action.name, log);
+        break;
+      case "agencyPromote":
+        agencyPromote(state, action.companyId, action.budget, log);
+        break;
+      case "buyAICompany":
+        buyAICompany(state, action.companyId, log);
+        break;
+      case "buyGovHelp":
+        buyGovHelp(state, action.kind, log);
+        break;
+      case "buyPartyMember":
+        buyPartyMember(state, action.partyId, log);
+        break;
+      case "hireSecurity":
+        hireSecurity(state, action.level, log);
+        break;
+      case "assumePower":
+        assumePower(state, log);
+        break;
       case "foundMedia":
         foundMedia(state, action.kind, action.name, log);
         break;
@@ -1680,15 +1710,191 @@ function conPropose(state: GameState, title: string, log: string[]) {
 function socialPost(state: GameState, platform: string, topic: string, spendAmt: number, log: string[]) {
   if (spendAmt) spend(state.player, spendAmt, "Boosted post", "social", date(state));
   const acc = state.player.social.platforms.find((p) => p.platform === platform) ?? state.player.social.platforms[0]!;
-  const virality = rng(state) * (10 + state.player.skills.writing * 0.2 + spendAmt / 5000);
+  // SEO/editor/handlers boost virality automatically (hire does the work)
+  const handlers = state.player.social.handlers ?? [];
+  const seoBoost = handlers.filter(h=>h.specialty==="seo").length * 2.2;
+  const editorBoost = handlers.filter(h=>h.specialty==="editor").length * 1.1;
+  const handlerBoost = handlers.filter(h=>h.specialty==="handler").length * 0.9;
+  const allrounderBoost = handlers.filter(h=>h.specialty==="allrounder").length * 3.5;
+  const agencySeo = state.player.social.agency ? state.player.social.agency.staff.seo*0.6 : 0;
+  const virality = rng(state) * (10 + state.player.skills.writing * 0.2 + state.player.skills.marketing*0.08 + spendAmt / 5000 + seoBoost + editorBoost + handlerBoost + allrounderBoost + agencySeo);
   acc.posts += 1;
-  acc.followers = Math.round(acc.followers + virality * 12);
-  acc.engagement = clamp(acc.engagement * 0.8 + virality, 0, 100);
+  // immediate views
+  const views = Math.round(virality*1200 + state.player.social.followers*0.02);
+  (acc as any).views = ((acc as any).views||0) + views;
+  state.player.social.views = (state.player.social.views||0) + views;
+  acc.followers = Math.round(acc.followers + virality * (12 + editorBoost*2));
+  acc.engagement = clamp(acc.engagement * 0.8 + virality + seoBoost*0.6, 0, 100);
   state.player.reputation.social += virality > 8 ? 2 : 0.3;
-  log.push(`Post on ${acc.platform} (${topic}). +${Math.round(virality * 12)} followers.`);
+  state.player.social.brand = clamp(state.player.social.brand + virality*0.12, 0, 100);
+  // instant ad payout per post: views/1000 * CPM 0.55 share
+  const cpm = 140 + state.player.social.brand*2 + seoBoost*12;
+  const instantAd = Math.round(views/1000 * cpm * 0.55);
+  if (instantAd>0) {
+    credit(state.player, instantAd, `Ad revenue · ${views.toLocaleString()} views · ${acc.platform}`, "media", date(state));
+    (acc as any).revenue = ((acc as any).revenue||0) + instantAd;
+    const mf = getAdv(state).monthFlow;
+    if (mf) mf.flows.media = round(money(mf.flows.media)+instantAd,2);
+  }
+  // if you have an agency, every post also promotes your owned companies
+  if (state.player.social.agency && state.player.ownedCompanyIds.length) {
+    const co = state.world.companies.find(c=>c.id===state.player.ownedCompanyIds[0])!;
+    if (co) {
+      co.customers = Math.round(co.customers + virality*3);
+      co.sentiment = clamp(co.sentiment + virality*0.08, 10, 90);
+    }
+  }
+  log.push(`Post on ${acc.platform} (${topic}). +${Math.round(virality * 12)} followers, ${views.toLocaleString()} views, ${formatINR(instantAd)} ad revenue${state.player.social.agency?` → agency promoted ${state.player.ownedCompanyIds.length?state.world.companies.find(c=>c.id===state.player.ownedCompanyIds[0])?.name:"your brand"}`:""}.`);
   if (virality > 12) {
     news(state, `${state.player.name} goes briefly viral`, "A post punched above its weight. Brands noticed. So did critics.", "social", state.player.countryId, "Followers and scrutiny both rise.");
   }
+}
+
+function socialGrow(state: GameState, platform: string, log: string[]) {
+  const acc = state.player.social.platforms.find(p=>p.platform===platform) ?? state.player.social.platforms[0]!;
+  const handlers = state.player.social.handlers?.length ?? 0;
+  // handlers do the work even while you sleep: passive growth tick
+  const boost = handlers*6 + (state.player.social.agency? state.player.social.agency.reputation*0.4:0);
+  acc.followers = Math.round(acc.followers * (1 + (acc.engagement/600) + boost/1000));
+  (acc as any).views = Math.round(((acc as any).views||0) * 1.06 + acc.followers*0.05);
+  state.player.social.views = (state.player.social.views||0) + Math.round(acc.followers*0.05);
+  log.push(`${acc.platform} grew organically: ${acc.followers.toLocaleString()} followers, ${(acc as any).views.toLocaleString()} lifetime views. Your team works while you rest.`);
+}
+
+function hireSocial(state: GameState, role: "handler"|"editor"|"seo"|"allrounder", log: string[]) {
+  state.player.social.handlers ??= [];
+  const costs: Record<string,number> = { handler: 22000, editor: 32000, seo: 38000, allrounder: 55000 };
+  const salary = costs[role]!;
+  if (!spend(state.player, salary*2, `Hire ${role} (2 mo retainer)`, "media", date(state))) {
+    log.push(`Need ${formatINR(salary*2)} to hire a ${role}.`);
+    return;
+  }
+  const names = ["Aarav","Priya","Leo","Maya","Dev","Sofia","Kiran","Nina","Omar","Zara"];
+  const name = `${names[Math.floor(rng(state)*names.length)]} ${role}`;
+  state.player.social.handlers.push({ id: uid("sh"), name, skill: 55+Math.floor(rng(state)*40), salary, specialty: role });
+  state.player.social.brand = clamp(state.player.social.brand + (role==="allrounder"?3:1), 0, 100);
+  log.push(`Hired ${role} ${name} for ${formatINR(salary)}/mo. They start handling posting, SEO, editing and growth immediately — you don't have to post daily, they do.`);
+  timeline(state, `Hired social ${role}: ${name}.`, "media");
+  // also boost engagement instantly to show they work
+  for (const a of state.player.social.platforms) a.engagement = clamp(a.engagement+2, 0, 100);
+}
+
+function fireSocial(state: GameState, handlerId: string, log: string[]) {
+  const before = state.player.social.handlers?.length ?? 0;
+  state.player.social.handlers = (state.player.social.handlers ?? []).filter(h=>h.id!==handlerId);
+  log.push(before===state.player.social.handlers.length? "No such handler.":"Handler released.");
+}
+
+function foundAgency(state: GameState, name: string, log: string[]) {
+  if (state.player.social.agency) { log.push("You already run an agency — expand it instead."); return; }
+  if (!spend(state.player, 600000, `Found ${name} agency`, "media", date(state))) {
+    log.push("Need ₹6 L to rent office, register and hire core team.");
+    return;
+  }
+  state.player.social.agency = {
+    id: uid("ag"),
+    name,
+    staff: { handlers: 2, editors: 1, seo: 1, allRounders: 0 },
+    clients: 3,
+    retainers: 3,
+    reputation: 22,
+    monthlyRevenue: 0,
+    monthlyCosts: 0,
+  };
+  // auto-hire two handlers into social team as well
+  if (!state.player.social.handlers) state.player.social.handlers = [];
+  log.push(`${name} is open. 2 handlers + editor + SEO manager on payroll. It promotes your own companies/products every month and takes on 3 outside retainers. Hired staff do the posting, editing and SEO for you.`);
+  timeline(state, `Founded media agency ${name}.`, "media");
+  unlock(state, "media");
+}
+
+function agencyPromote(state: GameState, companyId: string, budget: number, log: string[]) {
+  const ag = state.player.social.agency;
+  if (!ag) { log.push("Found an agency first."); return; }
+  const co = state.world.companies.find(c=>c.id===companyId);
+  if (!co || !state.player.ownedCompanyIds.includes(companyId)) { log.push("Not your company."); return; }
+  if (!spend(state.player, budget, `Agency promotion · ${co.name}`, "media", date(state))) { log.push("Need budget."); return; }
+  const lift = budget/500000 + ag.reputation/120;
+  co.marketing = clamp(co.marketing + 4, 0, 40);
+  co.customers = Math.round(co.customers * (1+lift*0.06));
+  co.revenue += budget*0.6; // promoted sales funnel back as revenue next month inside tickSocial, but give instant taste
+  co.sentiment = clamp(co.sentiment + 3 + lift*2, 10, 90);
+  ag.reputation = clamp(ag.reputation + budget/400000, 0, 100);
+  log.push(`Agency blasted ${co.name} to ${formatINR(budget)} worth of reach across all platforms: +${(lift*6).toFixed(1)}% customers, sentiment +${(3+lift*2).toFixed(0)}. The agency also bills outside clients while you profit.`);
+  timeline(state, `Agency promoted ${co.name} (${formatINR(budget)}).`, "media");
+}
+
+function buyAICompany(state: GameState, companyId: string, log: string[]) {
+  const co = state.world.companies.find(c=>c.id===companyId);
+  if (!co) { log.push("No such company."); return; }
+  if (co.industry!=="ai" && co.industry!=="software" && !co.ai) { log.push("Not an AI company."); return; }
+  const price = co.askingPrice || co.valuation*0.6;
+  if (!spend(state.player, price, `Buy ${co.name} (AI)`, "biz", date(state))) { log.push(`Need ${formatINR(price)} to acquire.`); return; }
+  co.npc = false;
+  co.shareholders = [{ id: state.player.id, name: state.player.name, type: "player", shares: co.shares }];
+  co.playerRole = "owner";
+  co.forSale = false;
+  if (!state.player.ownedCompanyIds.includes(co.id)) state.player.ownedCompanyIds.push(co.id);
+  log.push(`Acquired AI company ${co.name} for ${formatINR(price)}. It now runs inside your portfolio — shares, model and compute are yours.`);
+  timeline(state, `Acquired AI company ${co.name}.`, "business");
+}
+
+function buyGovHelp(state: GameState, kind: "relief"|"land"|"contract", log: string[]) {
+  const country = state.world.countries.find(c=>c.id===state.player.countryId)!;
+  if (kind==="relief") {
+    const cost = 400000;
+    if (!spend(state.player, cost, "Government liaison · relief", "politics", date(state))) { log.push(`Need ${formatINR(cost)} to lobby.`); return; }
+    const relief = Math.round(600000 + rng(state)*800000);
+    credit(state.player, relief, `Government relief · ${country.name}`, "gov", date(state));
+    state.player.reputation.political = clamp(state.player.reputation.political+4, 0, 100);
+    log.push(`Government sanctioned ${formatINR(relief)} relief after your liaison work (net +${formatINR(relief-cost)}). Helping the government pays.`);
+    timeline(state, `Secured government relief ${formatINR(relief)}.`, "politics");
+  } else if (kind==="land") {
+    const landPrice = Math.round(800000 + rng(state)*1200000);
+    const listing: any = { id: uid("pr"), name: `Govt. allotted industrial plot`, kind: "land", countryId: country.id, cityId: state.player.cityId, district: "New Industrial Estate", size: 2400 + Math.floor(rng(state)*4000), condition: 95, price: landPrice, rent: 0, occupancy: 0, distressed: false };
+    // For demo, give discounted government land at 60% price
+    const pay = Math.round(landPrice*0.6);
+    if (!spend(state.player, pay, "Govt. land allotment", "property", date(state))) { log.push(`Need ${formatINR(pay)} (60% of ${formatINR(landPrice)} via govt. quota).`); return; }
+    state.player.properties.push({ id: listing.id, name: listing.name, kind: "land", countryId: listing.countryId, cityId: listing.cityId, district: listing.district, size: listing.size, condition: listing.condition, purchasePrice: pay, value: landPrice, rent: 0, occupancy: 0, maintenance: pay*0.002, tax: pay*0.001, mortgaged: false, yearBought: state.time.year });
+    log.push(`Government allotted ${listing.size}m² industrial land for ${formatINR(pay)} (market ${formatINR(landPrice)}). Build whatever you want: apartments, offices, mall, villas or hotel.`);
+    timeline(state, `Got government land (${listing.size}m²) at 40% discount.`, "property");
+  } else {
+    const value = 12000000;
+    const contract: any = { id: uid("ct"), counterparty: `${country.name} Govt.`, kind: "gov", value, monthsLeft: 24, penalty: 2000000, performance: 60 };
+    state.player.contracts.push(contract);
+    log.push(`Signed a ${formatINR(value)} government digitisation contract (24 mo). Monthly progress will credit revenue.`);
+  }
+}
+
+function buyPartyMember(state: GameState, partyId: string, log: string[]) {
+  const party = state.world.parties.find(p=>p.id===partyId);
+  if (!party) { log.push("No such party."); return; }
+  const cost = 250000;
+  if (!spend(state.player, cost, `Support · ${party.name}`, "politics", date(state))) { log.push(`Need ${formatINR(cost)} to enrol patrons.`); return; }
+  (state.player.politics as any).patrons = ((state.player.politics as any).patrons||0)+5;
+  party.members += 800;
+  state.player.politics.popularity = clamp(state.player.politics.popularity+3, 0, 95);
+  state.player.influence.political = clamp(state.player.influence.political+4, 0, 100);
+  log.push(`Patronised 5 influential members of ${party.name} (+800 party workers). Popularity +, political influence +, policy leverage next cycle.`);
+}
+
+function hireSecurity(state: GameState, level: number, log: string[]) {
+  if (state.player.politics.role!=="head") { log.push("Only a sitting Head of Government can command full state security."); return; }
+  const cost = level*180000;
+  if (!spend(state.player, cost, "State security detail", "politics", date(state))) { log.push(`Need ${formatINR(cost)} for security upgrade.`); return; }
+  (state.player.politics as any).security = clamp(((state.player.politics as any).security||0)+level*18, 0, 100);
+  log.push(`Security detail level ${(state.player.politics as any).security}/100. Scandals are suppressed, heat decays, and at 80+ you attain FULL POWER to push any policy.`);
+}
+
+function assumePower(state: GameState, log: string[]) {
+  if (state.player.politics.role!=="head") { log.push("You are not Head of Government."); return; }
+  const sec = (state.player.politics as any).security||0;
+  const pop = state.player.politics.popularity;
+  if (sec<80 || pop<62) { log.push(`Need security 80+ and popularity 62+ (you: sec ${sec}, pop ${pop.toFixed(0)}). Keep campaigning and fund security.`); return; }
+  (state.player.politics as any).fullPower = true;
+  log.push(`FULL POWER assumed. You can now set any tax/welfare/business/education policy instantly, appoint ministers, and your government has full state apparatus.`);
+  timeline(state, "Assumed full power as Head of Government.", "politics");
+  note(state, "You now rule with full security and full power.", "good");
 }
 
 function foundMedia(state: GameState, kind: string, name: string, log: string[]) {

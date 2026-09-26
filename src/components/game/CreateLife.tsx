@@ -12,6 +12,7 @@ const SKINS = ["#f6d7c3", "#e0ac69", "#c68642", "#8d5524", "#5c3317"];
 const HAIRS = ["#1a120b", "#3b2219", "#6b3a2a", "#2c2c2c", "#d1b184"];
 const PORTRAITS = ["gold", "teal", "rose", "violet", "slate"];
 
+// Zero cash from day one: if you set Age 0 you begin with ~₹1k and parental allowance only — every rupee after must be earned via school, part-time jobs and grades into big universities.
 const SCENARIOS: { id: string; name: string; desc: string }[] = [
   { id: "none", name: "No scenario", desc: "Pure mode start." },
   { id: "poor_student", name: "Poor student", desc: "₹5k, no degree, big hunger." },
@@ -59,7 +60,7 @@ export function CreateLife() {
         {
           mode,
           name,
-          age: mode === "random" ? age : modeDef.age,
+          age: age !== 18 || mode === "random" ? age : modeDef.age,
           countryId,
           background: "middle",
           educationLevel: modeDef.edu,
@@ -98,8 +99,8 @@ export function CreateLife() {
             </Select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Age override (random mode uses this)">
-              <Input type="number" min={16} max={70} value={age} onChange={(e) => setAge(Number(e.target.value))} />
+            <Field label="Age — 0 = born today (parents support till 18, no starting cash; jobs part-time, grades → big universities)">
+              <Input type="number" min={0} max={70} value={age} onChange={(e) => setAge(Number(e.target.value))} />
             </Field>
             <Field label="World seed (optional — same seed, same world)">
               <Input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="e.g. monsoon-7" />

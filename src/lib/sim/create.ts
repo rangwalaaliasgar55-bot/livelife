@@ -1,4 +1,5 @@
 import { getLife } from "./life";
+import { timeline } from "./feed";
 import {
   CITY_DEFS,
   COMPANY_PREFIX,
@@ -266,9 +267,33 @@ export function createGame(input: NewGameInput): GameState {
     successorUsed: false,
   };
 
+  // --- Day-one newborn: remove inherited cash, parents support until 18 ---
+  // If the player starts at age 0 (or mode zero with age <6) they begin with
+  // almost nothing; every rupee must be earned via school, part-time jobs and
+  // parental allowance. This satisfies the "remove cash from beginning" request
+  // while keeping older starts (18+) backwards compatible for tests.
+  if (input.age === 0 || (state.player.age < 6 && state.player.finances.cash > 20000)) {
+    const newbornCash = Math.round(500 + Math.random()*1500);
+    state.player.finances.cash = newbornCash;
+    if (state.player.finances.accounts[0]) {
+      state.player.finances.accounts[0].balance = 0;
+      state.player.finances.accounts[0].transactions = [];
+    }
+    state.player.finances.creditScore = 500;
+    // Parents are wealthy enough to give a monthly allowance that scales with their wealth
+    const famWealth = state.player.family.members.reduce((s,m)=>s+m.wealth,0);
+    // encode allowance hint in timeline
+    timeline(state, `Born to ${state.player.family.members.map(m=>m.name).join(" & ")} in ${state.world.cities.find(c=>c.id===state.player.cityId)?.name}. Parents will support you until 18.`, "family");
+  }
   state.seedLabel = seedLabel;
   applyScenario(state, input.scenarioId);
   state.adv = initAdv(state, seedLabel);
+  // Ensure newborn relationships are strictly parents + friends (no girlfriend/wife at birth)
+  {
+    const L = getLife(state);
+    L.people = L.people.filter(pp => pp.rel==="mother"||pp.rel==="father"||pp.rel==="sibling"||pp.rel==="friend"||pp.rel==="child");
+    L.candidates = [];
+  }
   getLife(state);
   return state;
 }
@@ -412,9 +437,9 @@ function buildPlayer(
   companies: ListedCompany[],
   rng: () => number,
 ): Player {
-  let age = input.age || modeDef.age;
-  let wealth = input.wealth || modeDef.wealth;
-  let edu = input.educationLevel || modeDef.edu;
+  let age = (input.age !== undefined && input.age !== null) ? input.age : modeDef.age;
+  let wealth = (input.wealth !== undefined && input.wealth !== null) ? input.wealth : modeDef.wealth;
+  let edu = (input.educationLevel !== undefined && input.educationLevel !== null) ? input.educationLevel : modeDef.edu;
   const traits = { ...defaultTraits(), ...input.traits };
   if (input.mode === "random") {
     age = 16 + Math.floor(rng() * 28);
@@ -540,6 +565,9 @@ function buildPlayer(
       platform: centrist(),
       elections: [],
       billsProposed: 0,
+      security: 0,
+      fullPower: false,
+      patrons: 0,
     },
     crime: {
       path: input.mode === "crime",
@@ -553,9 +581,15 @@ function buildPlayer(
       wanted: false,
     },
     social: {
-      platforms: SOCIAL_PLATFORMS.map((p) => ({ platform: p.id, handle: `@${input.name.split(" ")[0]?.toLowerCase() || "player"}`, followers: Math.round(rng() * 80), posts: 0, engagement: 2 })),
+      platforms: SOCIAL_PLATFORMS.map((p) => ({ platform: p.id, handle: `@${input.name.split(" ")[0]?.toLowerCase() || "player"}`, followers: Math.round(rng() * 80), posts: 0, engagement: 2, views: 0, watchHours: 0, revenue: 0 })),
       followers: 40,
       brand: 5,
+      views: 0,
+      viewsHistory: [],
+      adRevenue: 0,
+      sponsorships: 0,
+      agency: null,
+      handlers: [],
     },
     media: { outlets: [] },
     family: {

@@ -508,6 +508,24 @@ function tickPlayerMoney(state: GameState) {
     addFlow("freelance", g);
     addFlow("taxes", -tax);
   }
+  // Part-time campus jobs for students 16-22: if not fully employed, you can still earn
+  if (p.age>=16 && p.age<=22 && (!p.career.employed || (p.career.job && p.career.job.hours<=30)) ) {
+    const life = state.life as any;
+    const smarts = life?.smarts ?? 50;
+    const basePT = 9000 + smarts*120 + (p.educationLevel||0)*2000;
+    const hours = 10 + Math.min(12, Math.floor(smarts/8));
+    const pt = Math.round(basePT * (hours/40) * (0.9 + rng(state)*0.2));
+    // only pay if not already freelancing full time AND if studying or age<20
+    if (pt>0 && (p.currentStudy || p.age<20) ) {
+      credit(p, pt, `Part-time campus job (${hours}h/wk)`, "freelance", date);
+      addFlow("freelance", pt);
+      income += pt;
+      // good grades lift: studying hard adds a small gpa bonus
+      if (p.currentStudy) {
+        p.currentStudy.gpa = clamp(p.currentStudy.gpa + 0.015, 1, 4);
+      }
+    }
+  }
 
   for (const prop of p.properties) {
     const city = state.world.cities.find((c) => c.id === prop.cityId);
@@ -573,8 +591,27 @@ function tickPlayerMoney(state: GameState) {
   // Living costs run in arrears when you are short: you pay what you have and
   // the rest becomes a debt to the household, not a confiscation of the balance.
   const carried = money(p.finances.arrears);
-  const live = livingCostFor(state) + carried;
-  p.finances.livingCost = livingCostFor(state);
+  const rawLiving = livingCostFor(state);
+  const isChild = p.age < 12;
+  const isTeen = p.age < 18;
+  // Parents cover all living until 12, half until 18
+  const liveBase = isChild ? 0 : isTeen ? Math.round(rawLiving/2) : rawLiving;
+  const live = liveBase + carried;
+  // Parental allowance until 18: scales with family wealth + your grades/behaviour
+  if (p.age < 18) {
+    const parents = state.life?.people?.filter(x=>x.rel==="mother"||x.rel==="father"&&x.alive) || [];
+    const famCash = parents.reduce((s,x)=>s+(x.wealth||0),0) || (p.family.members.reduce((s,m)=>s+m.wealth,0) || 800000);
+    const baseAllowance = Math.round(Math.max(12000, Math.min(95000, famCash*0.002 + 16000)));
+    // good grades (educationLevel & smarts) lift allowance 10-30%
+    const life2 = state.life as any;
+    const smarts = life2?.smarts ?? 50;
+    const gradesBonus = 1 + clamp(smarts-50,0,50)/250;
+    const allowance = Math.round(baseAllowance * gradesBonus);
+    credit(p, allowance, `Parental allowance (age ${p.age})`, "life", date);
+    addFlow("lifeIncome", allowance);
+    income += allowance;
+  }
+  p.finances.livingCost = isChild ? 0 : isTeen ? Math.round(rawLiving/2) : rawLiving;
   expenses += live;
   addFlow("living", -live);
   const life = spendUpTo(p, live, "Living costs", "live", date);
@@ -711,6 +748,10 @@ function tickProperties(state: GameState) {
 
 function tickPolitics(state: GameState) {
   const p = state.player;
+  // backfill
+  (p.politics as any).security ??= 0;
+  (p.politics as any).fullPower ??= false;
+  (p.politics as any).patrons ??= 0;
   if (p.politics.role === "none") {
     for (const party of state.world.parties) {
       party.popularity = clamp(party.popularity + (rng(state) - 0.5) * 0.4, 3, 70);
@@ -723,8 +764,17 @@ function tickPolitics(state: GameState) {
     country.policy = { ...country.policy, ...p.politics.platform };
     country.headOfGov = p.name;
     p.politics.popularity = clamp(p.politics.popularity * 0.85 + country.approval * 0.15, 5, 95);
-    if (chance(rng.bind(null, state), 0.06)) {
+    // Security reduces scandal/heat and unlocks full power
+    const sec = (p.politics as any).security as number;
+    const scandalChance = clamp(0.06 - sec*0.004, 0.005, 0.06);
+    if (chance(rng.bind(null, state), scandalChance)) {
       state.pending.push(scandalDecision(state));
+    }
+    // full power: if security >=80 and popularity >62, you can push any policy without chamber check
+    (p.politics as any).fullPower = sec >= 80 && p.politics.popularity > 62;
+    // head gets a stipend + protection reduces crime heat
+    if (sec>0) {
+      p.crime.heat = clamp(p.crime.heat - sec*0.04, 0, 100);
     }
   } else {
     p.politics.popularity = clamp(p.politics.popularity + (p.skills.politics - 40) * 0.01 + (rng(state) - 0.48), 0, 90);
@@ -732,6 +782,12 @@ function tickPolitics(state: GameState) {
   if (p.media.outlets.length && chance(rng.bind(null, state), 0.1)) {
     p.reputation.media += 1;
     p.politics.popularity += 0.4;
+  }
+  // patronised party members drift popularity toward you
+  const patrons = (p.politics as any).patrons as number;
+  if (patrons>0 && p.politics.partyId) {
+    const party = state.world.parties.find(x=>x.id===p.politics.partyId);
+    if (party) party.popularity = clamp(party.popularity + patrons*0.04, 3, 85);
   }
 }
 
@@ -822,11 +878,102 @@ function tickCrime(state: GameState) {
 
 function tickSocial(state: GameState) {
   const p = state.player;
-  const date = formatDate(state.time.year, state.time.month);
+  // backfill
+  p.social.views ??= 0;
+  p.social.viewsHistory ??= [];
+  p.social.adRevenue ??= 0;
+  p.social.sponsorships ??= 0;
+  p.social.handlers ??= [];
+  p.social.agency ??= null;
+  if (!p.social.platforms[0] || p.social.platforms[0].views === undefined) {
+    for (const a of p.social.platforms) {
+      (a as any).views ??= 0;
+      (a as any).watchHours ??= 0;
+      (a as any).revenue ??= 0;
+    }
+  }
+  // --- real growth engine ---
+  // handlers/editors/seo/allrounders automation
+  const handlers = (p.social.handlers || []).filter(h=>h.specialty==="handler").length;
+  const editors = (p.social.handlers || []).filter(h=>h.specialty==="editor").length;
+  const seo = (p.social.handlers || []).filter(h=>h.specialty==="seo").length;
+  const allround = (p.social.handlers || []).filter(h=>h.specialty==="allrounder").length;
+  const agencyBoost = p.social.agency ? 1 + p.social.agency.reputation/120 + p.social.agency.staff.handlers*0.04 : 1;
+  const handlerBoost = 1 + handlers*0.06 + editors*0.04 + seo*0.08 + allround*0.12;
+  const brand = p.social.brand/100;
+  const socialCountry = state.world.countries.find((c:any)=>c.id===p.countryId) ?? null;
   for (const a of p.social.platforms) {
-    a.followers = Math.max(0, Math.round(a.followers * (1 + a.engagement / 400) + (p.reputation.social - 20) * 0.02));
+    const baseGrowth = (a.engagement/600) + brand*0.02 + p.reputation.social/1800;
+    // SEO and editors improve engagement organically
+    a.engagement = clamp(a.engagement + seo*0.08 + editors*0.05 + allround*0.1 - 0.02, 0, 100);
+    const viral = (rng(state)-0.5)*0.04;
+    const growth = (1 + baseGrowth + viral) * handlerBoost * agencyBoost;
+    const newFollowers = Math.round(a.followers * (growth-1) + Math.max(0,(p.reputation.social-20)*0.03 + handlers*2));
+    // views = followers * viewRate * engagement
+    const viewRate = clamp(0.12 + a.engagement/160 + (a as any).views/10000000, 0.08, 3.5);
+    const views = Math.round(a.followers * viewRate * (0.9 + rng(state)*0.2) * handlerBoost);
+    (a as any).views = views;
+    (a as any).watchHours = Math.round(views * (0.02 + a.engagement/5000));
+    a.followers = Math.max(0, Math.round(a.followers + newFollowers));
+    // --- real ad revenue: CPM model ---
+    // CPM 80-600 INR depending on country GDP/brand/seo
+    const cpmBase = 120 + brand*180 + seo*30 + editors*12 + Math.min(200, p.social.followers/8000);
+    const cpm = cpmBase * (socialCountry ? (socialCountry.gdp/4e14) : 1);
+    const ad = Math.round(views/1000 * cpm * 0.55); // 55% to creator
+    (a as any).revenue = ad;
   }
   p.social.followers = p.social.platforms.reduce((s, a) => s + a.followers, 0);
+  p.social.views = p.social.platforms.reduce((s,a)=> s + ((a as any).views||0), 0);
+  const date = formatDate(state.time.year, state.time.month);
+  // pay out ad revenue across all platforms
+  const monthlyAd = p.social.platforms.reduce((s,a)=> s + ((a as any).revenue||0), 0);
+  if (monthlyAd>0) {
+    credit(p, monthlyAd, `Ad revenue · ${p.social.views.toLocaleString()} views`, "media", date);
+    const mf = getAdv(state).monthFlow;
+    if (mf) mf.flows.media = round(money(mf.flows.media)+ monthlyAd, 2);
+    p.social.adRevenue = (p.social.adRevenue||0) + monthlyAd;
+  }
+  // sponsorships scaled by brand + followers (monthly random)
+  if (p.social.followers>8000 && chance(rng.bind(null,state), clamp(p.social.followers/300000,0,0.18))) {
+    const sponsor = Math.round(20000 + p.social.followers*0.8 + p.social.brand*400 + rng(state)*50000);
+    credit(p, sponsor, `Brand deal · ${p.social.followers.toLocaleString()} followers`, "media", date);
+    {
+      const mf2 = getAdv(state).monthFlow;
+      if (mf2) mf2.flows.media = round(money(mf2.flows.media)+sponsor,2);
+    }
+    p.social.sponsorships = (p.social.sponsorships||0)+sponsor;
+    note(state, `A brand paid ${formatINR(sponsor)} for a sponsored post.`, "good");
+  }
+  // agency retainers + costs
+  if (p.social.agency) {
+    const ag = p.social.agency;
+    // agency promotes your companies automatically: +revenue to owned AI/companies
+    const owned = state.world.companies.filter(c=>p.ownedCompanyIds.includes(c.id));
+    const promo = ag.staff.handlers*5000 + ag.staff.seo*7000 + ag.staff.editors*4000 + ag.staff.allRounders*12000;
+    for (const co of owned) {
+      const lift = (ag.reputation/100)*0.008 + (ag.staff.seo*0.002);
+      co.customers = Math.round(co.customers * (1+lift));
+      co.revenue += co.revenue*lift*0.3;
+    }
+    const retainer = ag.retainers * (12000 + brand*800 + p.social.followers*0.02);
+    const costs = ag.staff.handlers*28000 + ag.staff.editors*32000 + ag.staff.seo*38000 + ag.staff.allRounders*45000 + 20000;
+    const net = retainer - costs;
+    ag.monthlyRevenue = retainer;
+    ag.monthlyCosts = costs;
+    if (net!==0) {
+      if (net>0) credit(p, net, `Agency net · ${ag.name}`, "media", date);
+      else spendUpTo(p, -net, `Agency costs · ${ag.name}`, "media", date);
+      {
+        const mf3 = getAdv(state).monthFlow;
+        if (mf3) mf3.flows.media = round(money(mf3.flows.media)+net,2);
+      }
+    }
+    // reputation drifts
+    ag.reputation = clamp(ag.reputation + (retainer>costs?0.4:-0.3), 0, 100);
+  }
+  // history for panel sparkline
+  p.social.viewsHistory.push({ t: date, views: p.social.views, revenue: monthlyAd });
+  if (p.social.viewsHistory.length>36) p.social.viewsHistory.shift();
 
   // Outlets run a real P&L: advertising revenue follows reach, the economy and
   // inflation, and newsroom costs follow inflation too. An outlet can lose

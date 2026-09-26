@@ -554,8 +554,15 @@ function PropertyP({ state, act }: { state: GameState; act: (a: PlayerAction) =>
           ))
         )}
       </Card>
+      <Card>
+        <Label>Build whatever you want — from land to empire</Label>
+        <p className="text-xs text-[var(--muted)]">Buy any land, then in Finance Hub → Estates hire a developer: apartments, gated villas, office tower, mall or hotel — whatever you want. Vacant land can become any of them. Government land (Politics → Govt. help) gives you large plots at 40% off.</p>
+        <div className="mt-2 flex gap-1">
+          <Btn kind="ghost" onClick={()=>void act({type:"buyGovHelp", kind:"land"})}>Get govt. land at 60%</Btn>
+        </div>
+      </Card>
       <Card className="lg:col-span-2">
-        <Label>Market</Label>
+        <Label>Market — houses, shops, land, factories</Label>
         <Table
           headers={["Asset", "City", "Ask", "Rent", ""]}
           rows={listings.map((l) => [
@@ -609,7 +616,7 @@ function Business({ state, act }: { state: GameState; act: (a: PlayerAction) => 
         <Field label="Seed capital">
           <Input type="number" value={cap} onChange={(e) => setCap(Number(e.target.value))} />
         </Field>
-        <div className="mt-3">
+        <div className="mt-3 flex gap-2">
           <Btn
             onClick={() =>
               void act({
@@ -628,9 +635,11 @@ function Business({ state, act }: { state: GameState; act: (a: PlayerAction) => 
               })
             }
           >
-            Found company
+            Found {ind==="ai"?"AI company":"company"}
           </Btn>
+          {ind==="ai" ? <span className="text-[11px] text-[var(--muted)] self-center">AI companies get compute/model quality, and cheaper hiring of SEO/handlers via agency.</span> : null}
         </div>
+        <p className="text-[11px] text-[var(--muted)] mt-2">Buy AI shares directly in Media → AI companies, or here via distressed buys. Your agency's SEO will auto-promote your AI product.</p>
       </Card>
       <Card>
         <Label>For sale / distressed</Label>
@@ -1009,6 +1018,23 @@ function Politics({ state, act }: { state: GameState; act: (a: PlayerAction) => 
         )}
       </Card>
       <Card>
+        <Label>Government help — relief, land, contracts</Label>
+        <p className="text-xs text-[var(--muted)]">Help the government → government helps you. Relief grants, discounted land allotments you can build anything on, and state contracts. Only available in your home country.</p>
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Btn kind="ghost" onClick={()=>void act({type:"buyGovHelp", kind:"relief"})}>Get relief ₹4L liaison → ₹6-14L</Btn>
+          <Btn kind="ghost" onClick={()=>void act({type:"buyGovHelp", kind:"land"})}>Govt. land at 60% (build anything)</Btn>
+          <Btn kind="ghost" onClick={()=>void act({type:"buyGovHelp", kind:"contract"})}>State contract ₹1.2Cr</Btn>
+        </div>
+        <Label>Patronise party members (buy influence)</Label>
+        {parties.slice(0,3).map(pt=>(
+          <div key={pt.id} className="flex justify-between text-xs border-t border-white/5 py-1">
+            <span>{pt.name} · {pt.members.toLocaleString()} members</span>
+            <Btn kind="ghost" onClick={()=>void act({type:"buyPartyMember", partyId: pt.id})}>Buy 5 members ₹2.5L</Btn>
+          </div>
+        ))}
+        <p className="text-[11px] text-[var(--muted)]">Patrons: {(p.politics as any).patrons||0} · popularity + party growth every month.</p>
+      </Card>
+      <Card>
         <Label>Elections fought</Label>
         {p.politics.elections.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">None yet.</p>
@@ -1020,6 +1046,19 @@ function Politics({ state, act }: { state: GameState; act: (a: PlayerAction) => 
           ))
         )}
         <p className="mt-3 text-xs text-[var(--muted)]">Next national poll in {country.name}: {country.electionYear}.</p>
+      </Card>
+      <Card>
+        <Label>Power & security — become President with full control</Label>
+        <p className="text-xs text-[var(--muted)]">Win Head of Government first (run for office). Then build security — it blocks scandals, decays crime heat, and at 80+ with popularity 62+ you assume <b>full power</b> to set any policy instantly.</p>
+        <div className="mt-2 text-sm">
+          <div>Role: {p.politics.role} {p.politics.role==="head" ? `· security ${(p.politics as any).security||0}/100 · ${(p.politics as any).fullPower?"FULL POWER":"not full"}`:""}</div>
+          <Meter label="Security" value={(p.politics as any).security||0} />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Btn kind="ghost" disabled={p.politics.role!=="head"} onClick={()=>void act({type:"hireSecurity", level:1})}>Hire security ₹1.8L (+18)</Btn>
+          <Btn kind="ghost" disabled={p.politics.role!=="head"} onClick={()=>void act({type:"assumePower"})}>Assume full power</Btn>
+        </div>
+        <p className="text-[11px] text-[var(--muted)] mt-1">Full power also unlocks instant policy on the Cabinet levers above and minister appointments with zero opposition.</p>
       </Card>
     </div>
   );
@@ -1078,26 +1117,86 @@ function Concord({ state, act }: { state: GameState; act: (a: PlayerAction) => v
 function Media({ state, act }: { state: GameState; act: (a: PlayerAction) => void }) {
   const [topic, setTopic] = useState("markets");
   const [outlet, setOutlet] = useState("The Navpura Ledger");
+  const [agencyName, setAgencyName] = useState("Aurelion Media Labs");
+  const s = state.player.social as any;
+  const totalViews = s.views ?? 0;
+  const totalFollowers = state.player.social.followers;
+  const adRevenue = s.adRevenue ?? 0;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <Label>Pulse networks</Label>
-        {state.player.social.platforms.map((a) => (
-          <div key={a.platform} className="mt-2 text-sm">
-            {SOCIAL_PLATFORMS.find((p) => p.id === a.platform)?.name ?? a.platform} · {a.followers.toLocaleString()} · eng {a.engagement.toFixed(0)}
-            <div>
+        <Label>Pulse networks — real views, real growth, real money</Label>
+        <p className="text-xs text-[var(--muted)]">Every post generates <b>views</b> → views pay <b>ad revenue</b> (CPM). Followers grow from engagement + your team's SEO/handlers. Brand deals trigger at 8k+ followers. Your agency promotes your companies automatically.</p>
+        <div className="mt-2 flex gap-2 text-xs">
+          <span className="rounded-full border border-emerald-500/30 px-3 py-1">Followers {totalFollowers.toLocaleString()}</span>
+          <span className="rounded-full border border-sky-500/30 px-3 py-1">Views {Number(totalViews).toLocaleString()}</span>
+          <span className="rounded-full border border-amber-500/30 px-3 py-1">Ad revenue {formatINR(adRevenue||0)}</span>
+        </div>
+        {state.player.social.platforms.map((a:any) => (
+          <div key={a.platform} className="mt-3 rounded-xl border border-white/10 p-3 text-sm">
+            <div className="flex justify-between font-medium">{SOCIAL_PLATFORMS.find((p) => p.id === a.platform)?.name ?? a.platform} @{a.handle ?? ""} <span className="text-[var(--muted)]">{formatINR(a.revenue||0)} earned</span></div>
+            <div className="text-xs text-[var(--muted)]">{a.followers.toLocaleString()} followers · eng {a.engagement.toFixed(0)} · {Number(a.views||0).toLocaleString()} views · {Math.round(a.watchHours||0).toLocaleString()} watch hrs</div>
+            <div className="text-xs text-[var(--muted)]">Brand {state.player.social.brand.toFixed(0)} · posts {a.posts}</div>
+            <div className="mt-2 flex flex-wrap gap-1">
               <Btn kind="ghost" onClick={() => void act({ type: "socialPost", platform: a.platform, topic, spend: 0 })}>
-                Post
+                Post (free)
               </Btn>
               <Btn kind="ghost" onClick={() => void act({ type: "socialPost", platform: a.platform, topic, spend: 15000 })}>
                 Boost ₹15k
               </Btn>
+              <Btn kind="ghost" onClick={() => void act({ type: "socialGrow", platform: a.platform })}>
+                Let team grow
+              </Btn>
             </div>
           </div>
         ))}
-        <Field label="Topic">
+        <div className="mt-3"><Field label="Topic (what you post about — markets, your product, lifestyle)">
           <Input value={topic} onChange={(e) => setTopic(e.target.value)} />
-        </Field>
+        </Field></div>
+      </Card>
+      <Card>
+        <Label>Your agency & team — they do the work</Label>
+        {s.agency ? (
+          <div className="rounded-xl border border-emerald-500/20 p-3 text-sm">
+            <div className="font-medium">{s.agency.name} · rep {s.agency.reputation.toFixed(0)}/100</div>
+            <div className="text-xs text-[var(--muted)]">{s.agency.staff.handlers} handlers · {s.agency.staff.editors} editors · {s.agency.staff.seo} SEO · {s.agency.staff.allRounders} all-rounders · {s.agency.clients} clients</div>
+            <div className="text-xs text-[var(--muted)]">Retainers {formatINR(s.agency.monthlyRevenue||0)} / costs {formatINR(s.agency.monthlyCosts||0)} net {(s.agency.monthlyRevenue||0)-(s.agency.monthlyCosts||0) >=0 ? "+" : ""}{formatINR((s.agency.monthlyRevenue||0)-(s.agency.monthlyCosts||0))}/mo</div>
+            <div className="mt-2 text-xs">Your owned companies get +customers & sentiment every month automatically — the agency promotes your products while you sleep.</div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {state.player.ownedCompanyIds.slice(0,3).map(cid=>{
+                const co = state.world.companies.find(c=>c.id===cid);
+                return <Btn key={cid} kind="ghost" onClick={()=>void act({type:"agencyPromote", companyId: cid, budget: 800000})}>Promote {co?.ticker} ₹8L</Btn>
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm">
+            <p className="text-[var(--muted)]">No agency yet. Found one to hire handlers/editors/SEO and auto-promote your products + earn outside retainers.</p>
+            <div className="mt-2 flex gap-2">
+              <Input value={agencyName} onChange={e=>setAgencyName(e.target.value)} placeholder="Agency name" />
+              <Btn onClick={()=>void act({type:"foundAgency", name: agencyName})}>Found agency ₹6L</Btn>
+            </div>
+          </div>
+        )}
+        <Label>Hire team (they post/edit/do SEO for you)</Label>
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Btn kind="ghost" onClick={()=>void act({type:"hireSocial", role:"handler"})}>Handler ₹22k/mo</Btn>
+          <Btn kind="ghost" onClick={()=>void act({type:"hireSocial", role:"editor"})}>Editor ₹32k/mo</Btn>
+          <Btn kind="ghost" onClick={()=>void act({type:"hireSocial", role:"seo"})}>SEO manager ₹38k/mo</Btn>
+          <Btn kind="ghost" onClick={()=>void act({type:"hireSocial", role:"allrounder"})}>All-rounder ₹55k/mo</Btn>
+        </div>
+        <p className="text-[11px] text-[var(--muted)] mt-1">Each hire permanently lifts automatic growth, views and CPM. Editor = retention, SEO = discovery, Handler = reach, All-rounder = everything.</p>
+        {s.handlers?.length ? (
+          <div className="mt-3 space-y-1">
+            {s.handlers.map((h:any)=>(
+              <div key={h.id} className="flex justify-between text-xs border-t border-white/5 py-1">
+                <span>{h.name} · {h.specialty} · skill {h.skill}</span>
+                <Btn kind="ghost" onClick={()=>void act({type:"fireSocial", handlerId: h.id})}>Fire</Btn>
+              </div>
+            ))}
+          </div>
+        ): <p className="text-xs text-[var(--muted)] mt-2">No handlers yet — hire someone; they do the daily posting.</p>}
+        {s.viewsHistory?.length ? <div className="mt-3"><Label>Views history (36mo)</Label><Spark values={s.viewsHistory.map((x:any)=>x.views)} /></div>: null}
       </Card>
       <Card>
         <Label>Outlets you own</Label>
@@ -1108,6 +1207,21 @@ function Media({ state, act }: { state: GameState; act: (a: PlayerAction) => voi
             <Btn key={k} kind="ghost" onClick={() => void act({ type: "foundMedia", kind: k, name: outlet })}>
               {k}
             </Btn>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <Label>AI companies — buy shares or make your own</Label>
+        <p className="text-xs text-[var(--muted)]">Any AI/software firm counts. Buy a whole AI company with your cash, or found one from Business → Incorporate (industry AI).</p>
+        <div className="mt-2 max-h-52 overflow-auto">
+          {state.world.companies.filter(c=>c.industry==="ai"||c.industry==="software"||c.ai).slice(0,8).map(c=>(
+            <div key={c.id} className="flex justify-between text-xs border-t border-white/5 py-2">
+              <span>{c.name} ({c.ticker}) · {formatINR(c.valuation)} {c.ai?`· model ${c.ai.modelQuality.toFixed(0)}`:""}</span>
+              <span className="flex gap-1">
+                <Btn kind="ghost" onClick={()=>void act({type:"buyStock", ticker:c.ticker, shares:10})}>Buy 10 shares</Btn>
+                <Btn kind="ghost" onClick={()=>void act({type:"buyAICompany", companyId:c.id})}>Buy whole</Btn>
+              </span>
+            </div>
           ))}
         </div>
       </Card>

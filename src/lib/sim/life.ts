@@ -1126,8 +1126,16 @@ export function doActivity(state: GameState, id: string, log: string[]) {
     case "driver":
     case "boat":
     case "pilot": {
-      const base = id === "pilot" ? 0.3 : id === "boat" ? 0.55 : 0.5;
-      const pass = r(state) < clamp(base + L.smarts / 250 + (used ? 0.05 : 0), 0.1, 0.95);
+      // Fixed: pilot test now properly factors smarts, grades, hours and prior attempts
+      // - base raised so a decent student can pass
+      // - smarts/120 matters more than before
+      // - pilotHours & allrounder/handler campaign experience not needed but gpa helps
+      const gpa = state.player.currentStudy?.gpa ?? (2.8 + L.smarts/120);
+      const eduBonus = clamp(state.player.educationLevel*0.04, 0, 0.12);
+      const gpaBonus = clamp((gpa-2.5)*0.08, -0.05, 0.15);
+      const hoursBonus = clamp(L.pilotHours/80, 0, 0.18);
+      const base = id === "pilot" ? 0.42 : id === "boat" ? 0.58 : 0.55;
+      const pass = r(state) < clamp(base + L.smarts / 120 + eduBonus + gpaBonus + hoursBonus + (used ? 0.08 : 0) + (state.player.skills.engineering??0)/800, 0.15, 0.97);
       if (pass) {
         L.licenses.push(id);
         if (id === "pilot") {
