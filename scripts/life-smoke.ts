@@ -308,8 +308,9 @@ function answer(s: GameState, k: number) {
   const r = applyAction(s, { type: "admin", op: "xray" });
   check("x-ray refuses without admin", !s.adv?.admin?.xray && /locked/i.test(r.log.join(" ")));
   applyAction(s, { type: "admin", op: "unlock", key: process.env.NEXT_PUBLIC_ADMIN_KEY ?? "aurelion-admin" });
+  check("x-ray turns on for the admin at unlock", Boolean(s.adv?.admin?.xray));
   applyAction(s, { type: "admin", op: "xray" });
-  check("x-ray turns on for the admin", Boolean(s.adv?.admin?.xray));
+  check("the admin can switch x-ray off", !s.adv?.admin?.xray);
 }
 
 console.log(failures === 0 ? "\nLIFE TEST: ALL CHECKS PASSED" : `\nLIFE TEST: ${failures} CHECK(S) FAILED`);

@@ -21,10 +21,14 @@ const NAV: { id: string; label: string; group: string }[] = [
   { id: "markets", label: "Markets", group: "Capital" },
   { id: "property", label: "Property", group: "Capital" },
   { id: "business", label: "Companies", group: "Capital" },
+  { id: "hq", label: "Company HQ", group: "Capital" },
+  { id: "finance", label: "Bank, Brokers & FDs", group: "Capital" },
+  { id: "estates", label: "Estates & Developers", group: "Capital" },
   { id: "takeovers", label: "Stakes & Takeovers", group: "Capital" },
   { id: "lifestyle", label: "Jets, Cars & Travel", group: "Capital" },
   { id: "opps", label: "Opportunities", group: "Capital" },
   { id: "world", label: "World Map", group: "World" },
+  { id: "civic", label: "Taxes, Jobs & AI", group: "World" },
   { id: "politics", label: "Politics", group: "World" },
   { id: "concord", label: "Concord", group: "World" },
   { id: "media", label: "Media & Pulse", group: "World" },
@@ -45,9 +49,16 @@ const VIEW_HELP: Record<string, string> = {
   mylife:
     "Your life, one year at a time. Press + Age to live until your next birthday — life events stop you along the way and ask you to choose. Choices have consequences, some immediate, some years later. Relationships need attention or they fade; activities have diminishing returns within a year; habits, illness and prison are real.",
   casino:
-    "Blackjack, roulette, slots, crash, hi-lo, dice, plinko and mines — each played move by move. Every outcome comes from your save's random stream; house edges are shown. Gambling builds a habit that has consequences.",
+    "Blackjack, baccarat, video poker, roulette, the Big Six wheel, slots, crash, hi-lo, dice, plinko and mines — each played move by move. Own a casino? Run the floor from the Own & run tab. Every outcome comes from your save's random stream; house edges are shown. Gambling builds a habit that has consequences.",
   lifestyle:
     "Buy cars, yachts and aircraft. Fly your own plane anywhere on the map (and move there), put it on the charter market or dry-lease it to an airline. Plan vacations — commercial or private.",
+  hq: "Run a company you control for real: headcount by department with real salaries, pay level, AI agent seats and their compute bill, strategy, dividend payout, new cities, the AI lab, buybacks, debt, and acquisitions. Capacity, demand and cash all bind — a company that runs out of money bounces payroll and people leave.",
+  finance:
+    "Fixed deposits, a personal stockbroker who manages your money (skill hidden, fees real), your own bank (rates, risk, staff, branches, capital ratio, regulators, bank runs), buying a bank, and founding a brokerage firm with brokers, analysts and compliance on payroll.",
+  estates:
+    "Every property you own as a real tenancy: hire a letting agent or a full-service manager, set rent against the market, deal with arrears, damage and evictions, keep the condition up — or hire a developer to build apartments, villas, offices, a mall or a hotel, then lease or sell the units.",
+  civic:
+    "Government and the labour market: income tax on everything you earn, filed each July (honestly or not), audits, tax debt, benefits and pension; AI automation shrinking jobs by sector; degrees up to a PhD and professional certifications that protect you from AI and raise pay.",
   takeovers:
     "Build stakes in any company through tender offers, personally or through companies you control. 10% buys a board seat, over 50% buys control. Low-ball hostile bids can trigger a poison pill.",
   dashboard: "Your life at a glance: health, cash, world conditions and the latest wire. Use the speed controls to live time.",

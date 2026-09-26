@@ -1,5 +1,7 @@
 "use client";
 
+import { CivicView, CompanyHQView, EstatesView, FinanceHub } from "./BizViews";
+
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { generateBio, whyStock } from "@/lib/sim/advanced";
 import { importLife } from "@/lib/store";
@@ -29,6 +31,10 @@ export function Panels({
 }) {
   if (view === "mylife") return <LifeView state={state} act={act} busy={busy} />;
   if (view === "casino") return <CasinoFloor state={state} act={act} busy={busy} />;
+  if (view === "hq") return <CompanyHQView state={state} act={act} />;
+  if (view === "finance") return <FinanceHub state={state} act={act} />;
+  if (view === "estates") return <EstatesView state={state} act={act} />;
+  if (view === "civic") return <CivicView state={state} act={act} />;
   if (view === "lifestyle") return <LifestyleView state={state} act={act} busy={busy} />;
   if (view === "takeovers") return <CorporatePanel state={state} act={act} busy={busy} />;
   if (view === "staff") return <Staff state={state} act={act} />;
@@ -1159,7 +1165,7 @@ function Under({ state, act, busy }: { state: GameState; act: (a: PlayerAction) 
           </p>
         ))}
         <Btn kind="ghost" onClick={() => void act({ type: "foundCasino", name: "Gold Palm", cityId: state.player.cityId })}>
-          Open a house (₹80L)
+          Build a casino (₹5 Cr) — run it from Casino → Own &amp; run
         </Btn>
         <Label>Fictional underground</Label>
         <p className="text-xs text-[var(--muted)]">Abstract risk/reward only. Not a guide to real crime.</p>

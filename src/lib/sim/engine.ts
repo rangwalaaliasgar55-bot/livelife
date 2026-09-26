@@ -18,6 +18,12 @@ import { inPrison, tickLife } from "./life";
 import { maybeLifeEvent, tickConsequences } from "./lifeevents";
 import { tickLifestyle } from "./lifestyle";
 import { tickStakes } from "./corporate";
+import { hqPre, hqPost } from "./company";
+import { tickFinFirms } from "./finfirms";
+import { tickCasinoOps } from "./casinoops";
+import { tickEstates } from "./estates";
+import { accrueTax, completeStudy, studyDone, tickCivic } from "./civic";
+import { getBiz } from "./biz";
 import type {
   Country,
   Decision,
@@ -44,6 +50,9 @@ export function tickMonths(state: GameState, months = 1): GameState {
 }
 
 function tickOnce(state: GameState) {
+  // last month's cash-flow report goes into this year's tax book before the
+  // next one is started
+  accrueTax(state);
   state.ticks += 1;
   state.time.month += 1;
   if (state.time.month > 12) {
@@ -73,7 +82,7 @@ function tickOnce(state: GameState) {
   tickPolitics(state);
   tickCrime(state);
   tickSocial(state);
-  tickCasinos(state);
+  tickBiz(state);
   tickHealth(state);
   tickLife(state, birthday);
   tickLifestyle(state);
@@ -235,11 +244,14 @@ function tickCompany(state: GameState, co: ListedCompany) {
   co.marketShare = clamp(co.marketShare * (1 + shareDrift / 12), 0.05, 55);
 
   const wage = (city?.avgWage ?? 800000) / 12;
-  let payroll = co.employees * wage * meta.wage;
-  const cogs = co.revenue * (0.42 - co.quality / 400);
+  // Companies you control are run through Company HQ: real annual payroll by
+  // department, AI agent and compute bills, strategy, expansion and capacity.
+  const hq = !co.npc && state.player.ownedCompanyIds.includes(co.id) ? hqPre(state, co) : null;
+  let payroll = hq ? hq.payroll : co.employees * wage * meta.wage;
+  const cogs = hq ? hq.cogs : co.revenue * (0.42 - co.quality / 400);
   let mktSpend = co.revenue * (co.marketing / 100);
   let rdSpend = co.revenue * (co.rd / 100);
-  const infra = co.ai ? co.ai.infraCost : co.revenue * 0.03;
+  const infra = hq ? hq.extra : co.ai ? co.ai.infraCost : co.revenue * 0.03;
   const interest = co.debt * (country.interestRate / 100 / 12);
   if (!co.npc) {
     if (co.playerCeo) {
@@ -255,28 +267,54 @@ function tickCompany(state: GameState, co: ListedCompany) {
     if (hasAdvisor(state, "marketing")) mktSpend *= 0.96;
     if (hasAdvisor(state, "tech") && co.ai) rdSpend *= 0.92;
   }
-  const tax = Math.max(0, (co.revenue - cogs - payroll - mktSpend - rdSpend - infra - interest) * (country.corpTax / 100));
 
-  let targetRev = co.revenue * econ * rateHit * disrupt * (0.985 + co.marketShare / 800);
+  let targetRev = co.revenue * econ * rateHit * disrupt * (0.985 + co.marketShare / 800) * (hq ? hq.revMult : 1);
+  // your sales team keeps opening new accounts on top of the organic trend
+  if (hq && co.stage !== "startup" && co.stage !== "idea") targetRev += hq.newBiz;
   if (co.supply) {
     if (co.supply.shortage > 30) targetRev *= 0.92;
     co.supply.shortage = clamp(co.supply.shortage + (rng(state) - 0.48) * 6, 0, 80);
     co.supply.utilization = clamp(co.supply.utilization + (country.gdpGrowth - 2) * 0.4, 30, 98);
   }
   co.revenue = Math.max(0, co.revenue * 0.7 + targetRev * 0.3);
+  if (co.stage === "startup" || co.stage === "idea") {
+    co.customers = Math.max(0, Math.round(co.customers * (1 - co.churn) + ((5 + co.marketing * 0.8) * qualityF + (hq ? hq.leads : 0)) * (hq ? hq.revMult : 1)));
+    co.revenue = co.customers * Math.max(200, co.priceLevel * 40);
+    co.churn = clamp(0.08 - co.quality / 800 + co.priceLevel / 2000, 0.01, 0.25);
+    if (hq && co.revenue >= 1e7) {
+      co.stage = "growth";
+      timeline(state, `${co.name} passed ₹1 crore in annual revenue and is now a growth company.`, "business");
+      note(state, `${co.name} graduated from startup to growth stage.`, "good");
+    }
+  }
+  const demand = co.revenue;
+  if (hq) {
+    // you cannot sell what your people (and agents) cannot deliver
+    if (co.revenue > hq.capacity) {
+      co.revenue = hq.capacity;
+      co.quality = clamp(co.quality - 0.15, 1, 99);
+      if (co.stage === "startup" || co.stage === "idea") co.churn = clamp(co.churn + 0.02, 0.01, 0.3);
+    }
+    mktSpend = co.revenue * (co.marketing / 100);
+    rdSpend = co.revenue * (co.rd / 100);
+  }
+  const tax = Math.max(0, (co.revenue - cogs - payroll - mktSpend - rdSpend - infra - interest) * (country.corpTax / 100));
   co.costs = cogs + payroll + mktSpend + rdSpend + infra + interest;
   co.profit = co.revenue - co.costs - tax;
   co.cash += co.profit / 12;
   co.growth = clamp(((targetRev - co.revenue) / Math.max(1, co.revenue)) * 12 * 100, -40, 80);
+  if (hq)
+    hqPost(state, co, hq, demand, {
+      marketing: mktSpend,
+      rd: rdSpend,
+      interest,
+      tax,
+    });
 
   if (co.ai) {
     co.ai.modelQuality = clamp(co.ai.modelQuality + co.rd * 0.04 + state.world.tech.ai * 0.01, 1, 100);
     co.ai.infraCost = co.revenue * (0.05 + co.ai.compute / 400);
     co.ai.apiUsage = clamp(co.ai.apiUsage * (1 + co.growth / 400), 0, 1e7);
-  }
-
-  if (!co.npc && co.employees > 0) {
-    // player firms already handled; still update valuation
   }
 
   if (co.cash < 0 && co.debt > co.assets * 0.9) {
@@ -289,12 +327,6 @@ function tickCompany(state: GameState, co: ListedCompany) {
     co.stage = "bankrupt";
     co.price = Math.max(0.5, co.price * 0.1);
     news(state, `${co.name} files for bankruptcy`, `${co.ticker} ran out of cash after a squeeze in ${country.name}. Distressed inventory will hit the market.`, "business", country.id, "Equity holders are wiped; assets may be sold cheap.");
-  }
-
-  if (co.stage === "startup" || co.stage === "idea") {
-    co.customers = Math.max(0, Math.round(co.customers * (1 - co.churn) + (5 + co.marketing * 0.8) * qualityF));
-    co.revenue = co.customers * Math.max(200, co.priceLevel * 40);
-    co.churn = clamp(0.08 - co.quality / 800 + co.priceLevel / 2000, 0.01, 0.25);
   }
 
   const peBase = meta.pe * (1 - (country.interestRate - 4) * 0.03) * (1 + country.gdpGrowth / 80);
@@ -367,6 +399,7 @@ function tickMarkets(state: GameState) {
 
 function tickBanks(state: GameState) {
   for (const b of state.world.banks) {
+    if (b.playerOwned) continue; // run by you — see finfirms.ts
     const c = state.world.countries.find((x) => x.id === b.countryId)!;
     b.savingsRate = c.interestRate * 0.38;
     b.lendingRate = c.interestRate + 3.1 + b.npl * 0.15;
@@ -432,13 +465,11 @@ function tickPlayerWork(state: GameState) {
   }
   if (p.currentStudy) {
     p.currentStudy.gpa = clamp(p.currentStudy.gpa + (p.traits.discipline - 50) * 0.01 + (rng(state) - 0.5) * 0.05, 1, 4);
-    const years = state.time.year - p.currentStudy.startYear + state.time.month / 12;
-    const need = p.currentStudy.level === "university" ? 3.5 : p.currentStudy.level === "course" ? 0.3 : 2;
-    if (years >= need) {
+    if (studyDone(state, p.currentStudy)) {
       p.currentStudy.completed = true;
       p.currentStudy.inProgress = false;
       p.currentStudy.endYear = state.time.year;
-      p.educationLevel = Math.max(p.educationLevel, p.currentStudy.level === "university" ? 4 : 3);
+      completeStudy(state, p.currentStudy);
       timeline(state, `Completed ${p.currentStudy.name}.`, "education");
       note(state, `You finished ${p.currentStudy.name}.`, "good");
       unlock(state, "graduate");
@@ -626,6 +657,11 @@ function tickPlayerMoney(state: GameState) {
   for (const cid of p.ownedCompanyIds) {
     const co = state.world.companies.find((c) => c.id === cid);
     if (!co) continue;
+    // Companies you run from HQ pay out through their dividend policy instead.
+    if (getBiz(state).hq[cid]) {
+      if (co.profit > 0) unlock(state, "profit_month");
+      continue;
+    }
     if (co.profit > 0 && co.stage !== "startup" && co.stage !== "idea") {
       const sh = co.shareholders.find((s) => s.type === "player");
       if (sh) {
@@ -662,7 +698,10 @@ function shortfall(state: GameState, text: string, severity: number) {
 }
 
 function tickProperties(state: GameState) {
+  const estates = getBiz(state).estates;
   for (const prop of state.player.properties) {
+    // Managed estates run real tenancies (estates.ts) and set occupancy themselves.
+    if (estates[prop.id]) continue;
     const city = state.world.cities.find((c) => c.id === prop.cityId);
     if (!city) continue;
     const targetOcc = clamp(70 + (city.demand - 50) * 0.4 - (prop.rent / Math.max(1, prop.value) * 10000 - 50) * 0.3, 10, 100);
@@ -812,45 +851,14 @@ function tickSocial(state: GameState) {
   }
 }
 
-/** Player-owned houses. Money spent founding one used to disappear: the casino
- *  was created and never simulated again. Now it runs a monthly P&L. */
-function tickCasinos(state: GameState) {
-  const p = state.player;
-  if (!state.world.casinos.length) return;
-  const date = formatDate(state.time.year, state.time.month);
-  const mf = getAdv(state).monthFlow;
-  for (const c of state.world.casinos) {
-    const city = state.world.cities.find((x) => x.id === c.cityId);
-    const country = state.world.countries.find((x) => x.id === c.countryId);
-    if (!city || !country) continue;
-    const target =
-      (city.population / 1e6) * 6_000_000 * (0.55 + c.marketing / 120) * (0.8 + city.tourism / 200) * (country.gdpGrowth > 0 ? 1.05 : 0.88);
-    c.volume = Math.max(0, round(c.volume * 0.82 + target * 0.18, 0));
-    const edge = 0.045; // blended house edge across roulette/dice/cards/slots/mines
-    c.revenue = round(c.volume * edge, 0);
-    c.costs = round(c.staff * 18000 + c.security * 5000 + 140000 * (1 + country.inflation / 250), 0);
-    c.regulation = clamp(c.regulation + (rng(state) - 0.5) * 2 + (p.reputation.personal - 50) * 0.01, 5, 95);
-    const net = c.revenue - c.costs;
-    if (net >= 0) {
-      credit(p, net, `Casino net · ${c.name}`, "casino", date);
-      if (mf) mf.flows.casino = round(money(mf.flows.casino) + net, 2);
-    } else {
-      const paid = spendUpTo(p, -net, `Casino losses · ${c.name}`, "casino", date);
-      if (mf) mf.flows.casino = round(money(mf.flows.casino) - paid.paid, 2);
-      if (paid.short > 0 && chance(rng.bind(null, state), 0.5)) {
-        note(state, `${c.name} could not cover its floor costs (${formatINR(paid.short)} short).`, "bad");
-      }
-    }
-    if (c.regulation < 25 && chance(rng.bind(null, state), 0.12)) {
-      const fine = round(c.revenue * 0.6 + 250000, 0);
-      const paid = spendUpTo(p, fine, `Regulatory fine · ${c.name}`, "casino", date);
-      if (mf) mf.flows.fees = round(money(mf.flows.fees) - paid.paid, 2);
-      c.regulation = clamp(c.regulation + 12, 5, 95);
-      note(state, `Regulators fined ${c.name} ${formatINR(fine)} for weak controls.`, "bad");
-      ledger(state, `Casino fine · ${c.name}`, -paid.paid);
-    }
-    if (chance(rng.bind(null, state), 0.25)) c.marketing = clamp(c.marketing + (rng(state) - 0.5) * 4, 5, 95);
-  }
+/** Everything the player runs for real: banks, brokerages, casinos, estates,
+ *  and the civic side (taxes, benefits, the AI jobs squeeze). Runs after the
+ *  money tick so each line lands in this month's cash-flow report. */
+function tickBiz(state: GameState) {
+  tickFinFirms(state);
+  tickCasinoOps(state);
+  tickEstates(state);
+  tickCivic(state);
 }
 
 function tickHealth(state: GameState) {

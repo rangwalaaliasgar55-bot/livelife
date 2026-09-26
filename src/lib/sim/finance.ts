@@ -77,9 +77,25 @@ export function groupStakes(state: GameState): number {
   return v;
 }
 
+/** Things you run for real, at conservative book value: fixed deposits, money
+ *  with your broker, your bank's capital, your brokerage, your casinos — less
+ *  any unpaid tax. Read straight off state so this file stays import-free. */
+export function ventureAssets(state: GameState): number {
+  const b = state.biz;
+  if (!b) return 0;
+  let v = 0;
+  for (const fd of b.fds ?? []) v += money(fd.principal) + money(fd.accrued);
+  if (b.broker) v += Math.max(0, money(b.broker.value));
+  for (const bank of state.world.banks) if (bank.playerOwned) v += Math.max(0, money(bank.capital));
+  for (const f of b.brokerages ?? []) v += Math.max(0, money(f.cash)) + money(f.aum) * 0.01;
+  for (const c of state.world.casinos) v += money(b.casinos?.[c.id]?.assetValue);
+  return v - money(b.taxDebt);
+}
+
 export function computeNetWorth(state: GameState): number {
   const p = state.player;
-  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) + lifestyleAssets(state) + groupStakes(state) - totalDebt(p);
+  return liquidCash(p) + portfolioValue(state) + businessEquity(state) + propertyValue(p) + lifestyleAssets(state) + groupStakes(state) +
+    ventureAssets(state) - totalDebt(p);
 }
 
 export function recordNetWorth(state: GameState) {

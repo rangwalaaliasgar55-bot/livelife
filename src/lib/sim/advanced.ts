@@ -564,11 +564,32 @@ const FLOW_LABELS: Record<string, string> = {
   advisors: "Advisors & staff",
   fees: "Bank & late fees",
   arrears: "Unpaid (arrears)",
+  taxReturn: "Tax return & tax debt",
+  gifts: "Gifts given",
+  benefits: "Unemployment benefit",
+  pension: "State pension",
+  estateFees: "Property managers",
+  estateRepairs: "Repairs, legal & fines",
+  fdInterest: "Fixed-deposit interest",
+  fdMoves: "Fixed deposits opened/closed",
+  brokerMoves: "Broker account in/out",
+  bankDiv: "Dividends from your bank",
+  hqDividends: "Dividends from your companies",
+  brokerage: "Your brokerage firm",
+  casinoCapex: "Casino fit-out & sales",
+  unitSales: "Property & unit sales",
 };
 
 const INCOME_KEYS = new Set([
   "salary", "freelance", "rent", "dividends", "coupons", "interest", "draws", "grants", "media", "casino", "gambling", "crime", "forecast",
   "charter", "lifeIncome",
+  "benefits",
+  "pension",
+  "fdInterest",
+  "bankDiv",
+  "hqDividends",
+  "brokerage",
+  "unitSales",
 ]);
 
 export const flowLabel = (key: string) => FLOW_LABELS[key] ?? key;

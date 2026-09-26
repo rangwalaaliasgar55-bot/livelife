@@ -31,19 +31,24 @@ import type { GameState, PlayerAction } from "@/lib/sim/types";
 import { formatINR } from "@/lib/sim/util";
 import { Btn, Card, Input, Label } from "./ui";
 import { MinesGame } from "./MinesGame";
+import { Baccarat, BigSix, CasinoOwner, VideoPoker } from "./CasinoGames2";
 
 type Act = (a: PlayerAction) => void;
-type GameId = "blackjack" | "roulette" | "slots" | "crash" | "dice" | "hilo" | "plinko" | "mines";
+type GameId = "blackjack" | "baccarat" | "vpoker" | "roulette" | "bigsix" | "slots" | "crash" | "dice" | "hilo" | "plinko" | "mines" | "own";
 
 const GAMES: { id: GameId; label: string; icon: string; blurb: string }[] = [
   { id: "blackjack", label: "Blackjack", icon: "🂡", blurb: "Hit, stand, double. Dealer stands on 17." },
+  { id: "baccarat", label: "Baccarat", icon: "♦", blurb: "Player, Banker or Tie. The high-roller game." },
+  { id: "vpoker", label: "Video Poker", icon: "🃏", blurb: "Jacks or Better. Hold, draw, get paid." },
   { id: "roulette", label: "Roulette", icon: "◎", blurb: "Single-zero wheel. Place chips, spin." },
+  { id: "bigsix", label: "Big Six", icon: "✺", blurb: "The money wheel. 54 segments, up to 40:1." },
   { id: "slots", label: "Slots", icon: "7", blurb: "Three reels, one line." },
   { id: "crash", label: "Crash", icon: "↗", blurb: "Ride the multiplier. Bail before it crashes." },
   { id: "hilo", label: "Hi-Lo", icon: "⇅", blurb: "Higher or lower — chain the calls." },
   { id: "dice", label: "Dice", icon: "⚄", blurb: "Pick your odds, roll 0–100." },
   { id: "plinko", label: "Plinko", icon: "▾", blurb: "Drop the ball through 12 rows of pegs." },
   { id: "mines", label: "Mines", icon: "✱", blurb: "5×5 board, find gems, dodge mines." },
+  { id: "own", label: "Own & run", icon: "🏛", blurb: "Build and run your own casino." },
 ];
 
 const EMPTY: CasinoState = { bj: null, crash: null, hilo: null, roulette: [], crashHistory: [], history: [], sessions: 0, net: 0 };
@@ -97,7 +102,7 @@ export function CasinoFloor({ state, act, busy }: { state: GameState; act: Act; 
   const habit = state.life?.addiction.gambling ?? 0;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-2 md:grid-cols-8">
+      <div className="grid grid-cols-4 gap-2 md:grid-cols-6 2xl:grid-cols-12">
         {GAMES.map((g) => (
           <button
             key={g.id}
@@ -110,8 +115,14 @@ export function CasinoFloor({ state, act, busy }: { state: GameState; act: Act; 
           </button>
         ))}
       </div>
+      {game === "own" ? (
+        <CasinoOwner state={state} act={act} />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div>
+            {game === "baccarat" ? <Baccarat c={c} act={act} busy={busy} cash={cash} /> : null}
+            {game === "vpoker" ? <VideoPoker c={c} act={act} busy={busy} cash={cash} xray={xray} /> : null}
+            {game === "bigsix" ? <BigSix c={c} act={act} busy={busy} cash={cash} /> : null}
           {game === "blackjack" ? <Blackjack c={c} act={act} busy={busy} cash={cash} xray={xray} /> : null}
           {game === "roulette" ? <Roulette c={c} act={act} busy={busy} cash={cash} /> : null}
           {game === "slots" ? <Slots c={c} act={act} busy={busy} cash={cash} /> : null}
@@ -163,6 +174,7 @@ export function CasinoFloor({ state, act, busy }: { state: GameState; act: Act; 
           </Card>
         </div>
       </div>
+      )}
     </div>
   );
 }

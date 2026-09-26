@@ -36,14 +36,28 @@ import {
   plinkoDrop,
   rouletteSpin,
   slotSpin,
+  baccaratDeal,
+  vpDeal,
+  vpDraw,
+  wheelSpin,
 } from "./casino";
+import { applyBiz, BIZ_PRISON_BLOCKED } from "./bizactions";
+import { certPay, jobAiRisk, resolveAiLayoff, resolveTax, STUDY_LEVELS, allTracks, taxGain } from "./civic";
+import { resolveCorp } from "./company";
+import { resolveBankCap, getBankOps } from "./finfirms";
+import { resolveEstate } from "./estates";
+import { getCasinoOps } from "./casinoops";
+import { getBiz } from "./biz";
 
 /** Things you simply cannot do from a cell. */
 const PRISON_BLOCKED = new Set<string>([
   "study", "course", "applyJob", "freelance", "travel", "buyProperty", "foundCompany", "buyCompany", "gamble", "minesStart",
   "foundCasino", "foundBank", "foundInsurer", "foundMedia", "campaign", "runForOffice", "createParty", "haveChild", "workout",
   "network", "buyVehicle", "buyAircraft", "flyAircraft", "vacation", "findLove", "askOut", "adoptPet", "adoptChild",
-  "bjStart", "rouletteSpin", "slotSpin", "crashStart", "diceRoll", "hiloStart", "plinkoDrop", "crimeAct", "applyResidency", "applyCitizenship",
+  "bjStart", "rouletteSpin", "slotSpin", "crashStart", "diceRoll", "hiloStart", "plinkoDrop", "baccaratDeal",
+  "vpDeal",
+  "wheelSpin",
+  "crimeAct", "applyResidency", "applyCitizenship",
 ]);
 import type {
   Loan,
@@ -179,11 +193,33 @@ export function applyAction(state: GameState, action: PlayerAction): { state: Ga
       case "plinkoDrop":
         plinkoDrop(state, action.stake, action.risk, log);
         break;
+      case "baccaratDeal":
+        baccaratDeal(state, action.bets, log);
+        break;
+      case "vpDeal":
+        vpDeal(state, action.stake, log);
+        break;
+      case "vpDraw":
+        vpDraw(state, action.holds, log);
+        break;
+      case "wheelSpin":
+        wheelSpin(state, action.bets, log);
+        break;
+      case "biz":
+        if (inPrison(state) && BIZ_PRISON_BLOCKED.has(action.op)) {
+          log.push("Not from a prison cell.");
+          break;
+        }
+        applyBiz(state, action.op, action.id ?? "", action.args ?? {}, log);
+        break;
       case "casinoClear": {
         const c = getCasino(state);
         if (action.game === "bj" && c.bj?.status !== "live") c.bj = null;
         if (action.game === "crash" && c.crash?.status !== "live") c.crash = null;
         if (action.game === "hilo" && c.hilo?.status !== "live") c.hilo = null;
+        if (action.game === "vp" && c.vp?.status !== "deal") c.vp = null;
+        if (action.game === "baccarat") c.baccarat = null;
+        if (action.game === "wheel") c.wheel = null;
         break;
       }
       case "tick":
@@ -743,19 +779,31 @@ function startStudy(state: GameState, track: EducationTrack, level: GameState["p
     log.push("Already studying.");
     return;
   }
-  const t = TRACKS.find((x) => x.id === track) ?? TRACKS[0]!;
-  const tuition = level === "university" ? 220000 : level === "college" ? 90000 : level === "course" ? 18000 : 40000;
+  const t = allTracks().find((x) => x.id === track) ?? TRACKS[0]!;
+  const lvl = STUDY_LEVELS.find((l) => l.id === level);
+  if (!lvl) {
+    log.push("Pick a programme level.");
+    return;
+  }
+  if (p.educationLevel < lvl.minEdu) {
+    log.push(`${lvl.name} needs education level ${lvl.minEdu} — you are at ${p.educationLevel}.`);
+    return;
+  }
+  const tuition = lvl.tuition;
   const rec = {
     id: uid("edu"),
     level,
-    name: `${t.name} ${level}`,
+    name: `${t.name} · ${lvl.name}`,
     track,
-    institution: level === "university" ? "Capital University" : level === "course" ? "Open Network" : "Civic College",
+    institution:
+      level === "phd" || level === "masters"
+        ? "Capital Graduate School": level === "university" ? "Capital University" : level === "course" ? "Open Network" : "Civic College",
     countryId: p.countryId,
     startYear: state.time.year,
+    startTick: state.ticks,
     endYear: null,
     tuition,
-    scholarship: p.educationLevel >= 3 && p.traits.discipline > 60 ? 40000 : 0,
+    scholarship: p.educationLevel >= 3 && p.traits.discipline > 60 ? Math.round(tuition * 0.2) : 0,
     loan: 0,
     gpa: 3.0,
     completed: false,
@@ -764,7 +812,7 @@ function startStudy(state: GameState, track: EducationTrack, level: GameState["p
   p.education.push(rec);
   p.currentStudy = rec;
   timeline(state, `Started ${rec.name}.`, "education");
-  log.push(`Enrolled in ${rec.name}. Tuition ${formatINR(tuition)}/yr.`);
+  log.push(`Enrolled in ${rec.name}. Tuition ${formatINR(tuition)}/yr for ${lvl.years < 1 ? `${Math.round(lvl.years * 12)} months` : `${lvl.years} years`}.`);
 }
 
 function trainSkill(state: GameState, skill: SkillId, amt: number, cost: number, log: string[]) {
@@ -799,7 +847,9 @@ function applyJob(state: GameState, jobId: string, log: string[]) {
   const skillOk = need === 0 || skillScore / need > 0.55;
   const country = state.world.countries.find((c) => c.id === job.countryId)!;
   const demandBoost = job.demand / 200;
-  const chanceP = clamp((eduOk ? 0.35 : 0.08) + (expOk ? 0.25 : 0) + (skillOk ? 0.25 : 0.05) + demandBoost - country.unemployment * 0.01 + p.reputation.professional / 400, 0.04, 0.92);
+  const certBonus = certPay(state, job.industry);
+  const chanceP = clamp((eduOk ? 0.35 : 0.08) + (expOk ? 0.25 : 0) + (skillOk ? 0.25 : 0.05) + demandBoost - country.unemployment * 0.01 + p.reputation.professional / 400 +
+      certBonus, 0.04, 0.92);
   log.push(`Interview odds ${Math.round(chanceP * 100)}% (education, experience, skills, demand).`);
   if (!chance(rng.bind(null, state), chanceP)) {
     log.push(`${job.employer} passed.`);
@@ -816,7 +866,13 @@ function applyJob(state: GameState, jobId: string, log: string[]) {
     });
   }
   p.career.employed = true;
+  if (certBonus > 0) {
+    job.salary = Math.round(job.salary * (1 + certBonus));
+    log.push(`Your certification lifts the offer by ${Math.round(certBonus * 100)}%.`);
+  }
   p.career.job = job;
+  const risk = jobAiRisk(state);
+  if (risk > 0.03) log.push(`Heads-up: this role is ${Math.round(risk * 1000) / 10}%/month exposed to AI automation.`);
   p.career.yearsInRole = 0;
   p.career.performance = 55;
   p.reputation.professional += 4;
@@ -999,6 +1055,7 @@ function tradeStock(state: GameState, ticker: string, shares: number, side: "buy
       return;
     }
     h.shares -= shares;
+    taxGain(state, cost - h.avgCost * shares);
     credit(state.player, cost, `Sell ${ticker}`, "inv", date(state));
     if (h.shares === 0) state.player.holdings = state.player.holdings.filter((x) => x.ticker !== ticker);
     log.push(`Sold ${shares} ${ticker}.`);
@@ -1107,9 +1164,14 @@ function buyProperty(state: GameState, listingId: string, mortgage: boolean, log
 function sellProperty(state: GameState, propertyId: string, log: string[]) {
   const prop = state.player.properties.find((p) => p.id === propertyId);
   if (!prop) return;
-  credit(state.player, prop.value * 0.97, `Sell ${prop.name}`, "property", date(state));
+  const e = getBiz(state).estates[prop.id];
+  if (e?.project && e.project.stage !== "done") return void log.push("A development is under way — cancel it or let it finish first.");
+  const net = prop.value * 0.97;
+  credit(state.player, net, `Sell ${prop.name}`, "property", date(state));
+  taxGain(state, net - money(prop.purchasePrice || prop.value));
   state.player.properties = state.player.properties.filter((p) => p.id !== propertyId);
-  log.push(`Sold ${prop.name} for ${formatINR(prop.value)}.`);
+  delete getBiz(state).estates[prop.id];
+  log.push(`Sold ${prop.name} for ${formatINR(net)} after 3% costs.`);
 }
 
 function renovate(state: GameState, propertyId: string, spendAmt: number, log: string[]) {
@@ -1333,6 +1395,8 @@ function sellShares(state: GameState, companyId: string, pct: number, log: strin
   sh.shares -= give;
   const proceeds = (give / co.shares) * co.valuation;
   credit(state.player, proceeds, `Sell ${co.name} shares`, "biz", date(state));
+  // founder shares have almost no cost basis: most of a sale is a gain
+  taxGain(state, proceeds * 0.8);
   log.push(`Sold ${pct}% for ${formatINR(proceeds)}.`);
 }
 
@@ -1885,13 +1949,17 @@ function minesCashout(state: GameState, log: string[]) {
   log.push(`Cashed out ${formatINR(payout)} at ${v.multiplier.toFixed(2)}× — ${net >= 0 ? "+" : "−"}${formatINR(Math.abs(net))} on the round.`);
 }
 
+export const CASINO_BUILD = 5e7;
+
 function foundCasino(state: GameState, name: string, cityId: string, log: string[]) {
-  if (!spend(state.player, 8e6, "Casino build", "biz", date(state))) {
-    log.push("Need ₹80 lakh+ to open a house.");
+  // A real resort casino: building, gaming floor, surveillance, licence, cage.
+  if (!spend(state.player, CASINO_BUILD, "Casino build", "biz", date(state))) {
+    log.push(`Building a licensed casino costs ${formatINR(CASINO_BUILD)} (floor, tables, 60 slots, cage, surveillance, licence).`);
     return;
   }
+  const casId = uid("cas");
   state.world.casinos.push({
-    id: uid("cas"),
+    id: casId,
     name,
     cityId,
     countryId: state.player.countryId,
@@ -1904,8 +1972,9 @@ function foundCasino(state: GameState, name: string, cityId: string, log: string
     costs: 200000,
     regulation: 40,
   });
+  getCasinoOps(state, state.world.casinos[state.world.casinos.length - 1]!);
   unlock(state, "casino_tycoon");
-  log.push(`${name} licensed (fictional).`);
+  log.push(`${name} opens its doors. Run the floor from Casino → Own & run.`);
 }
 
 function foundBank(state: GameState, name: string, log: string[]) {
@@ -1918,8 +1987,9 @@ function foundBank(state: GameState, name: string, log: string[]) {
     id: uid("bank"),
     name,
     countryId: state.player.countryId,
-    deposits: capital * 3,
-    loans: capital * 2,
+    // the charter comes with a starter book bought from a retiring co-op bank
+    deposits: capital * 5,
+    loans: capital * 3.5,
     capital,
     npl: 1,
     savingsRate: 3,
@@ -1928,6 +1998,7 @@ function foundBank(state: GameState, name: string, log: string[]) {
     branches: 1,
     profit: 0,
   });
+  getBankOps(state, state.world.banks[state.world.banks.length - 1]!);
   unlock(state, "banker");
   timeline(state, `Founded ${name} bank.`, "business");
   log.push("Bank chartered.");
@@ -2027,6 +2098,11 @@ function resolveDecision(state: GameState, decisionId: string, optionId: string,
     resolveLifeEvent(state, d, optionId, log);
     return;
   }
+  if (d.kind === "tax") return void resolveTax(state, d, optionId, log);
+  if (d.kind === "ailayoff") return void resolveAiLayoff(state, optionId, log);
+  if (d.kind === "corp") return void resolveCorp(state, d, optionId, log);
+  if (d.kind === "bankcap") return void resolveBankCap(state, d, optionId, log);
+  if (d.kind === "estate") return void resolveEstate(state, d, optionId, log);
   if (d.kind === "investor") {
     const co = state.world.companies.find((c) => c.id === d.context.companyId);
     if (!co) return;

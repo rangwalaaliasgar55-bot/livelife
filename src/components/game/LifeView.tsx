@@ -412,6 +412,7 @@ function People({ state, L, act, busy }: { state: GameState; L: LifeState; act: 
                           </Btn>
                         </div>
                       ) : null}
+                    <GiftBox state={state} act={act} busy={busy} person={t} />
                     </div>
                   ) : null}
                 </div>
@@ -492,6 +493,86 @@ function Activities({ state, L, act, busy, setView }: { state: GameState; L: Lif
           </div>
         </Card>
       ) : null}
+    </div>
+  );
+}
+
+/** Give someone money, a car, a property or shares. Big gifts to people outside
+ *  the family carry a 10% gift duty. */
+function GiftBox({ state, act, busy, person }: { state: GameState; act: (a: PlayerAction) => void; busy: boolean; person: Person }) {
+  const [kind, setKind] = useState<"cash" | "vehicle" | "property" | "shares">("cash");
+  const [amount, setAmount] = useState("10000");
+  const [ref, setRef] = useState("");
+  const vehicles = state.life?.vehicles ?? [];
+  const props = state.player.properties.filter((x) => !x.mortgaged);
+  const holdings = state.player.holdings;
+  const options =
+    kind === "vehicle"
+      ? vehicles.map((v) => ({
+          id: v.id,
+          label: `${v.name} · ${formatINR(v.value)}`,
+        }))
+      : kind === "property"
+        ? props.map((x) => ({
+            id: x.id,
+            label: `${x.name} · ${formatINR(x.value)}`,
+          }))
+        : kind === "shares"
+          ? holdings.map((h) => ({
+              id: h.ticker,
+              label: `${h.ticker} · ${h.shares} shares`,
+            }))
+          : [];
+  const pick = ref && options.some((o) => o.id === ref) ? ref : (options[0]?.id ?? "");
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2 text-xs">
+      <span className="tick">Gift</span>
+      <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="rounded-lg border border-white/10 bg-[#0b0e14] px-2 py-1">
+        <option value="cash">Cash</option>
+        <option value="vehicle">A vehicle</option>
+        <option value="property">A property</option>
+        <option value="shares">Shares</option>
+      </select>
+      {kind !== "cash" ? (
+        <select value={pick} onChange={(e) => setRef(e.target.value)} className="max-w-[220px] rounded-lg border border-white/10 bg-[#0b0e14] px-2 py-1">
+          {options.length ? (
+            options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))
+          ) : (
+            <option value="">nothing to give</option>
+          )}
+        </select>
+      ) : null}
+      {kind === "cash" || kind === "shares" ? (
+        <input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          inputMode="numeric"
+          placeholder={kind === "cash" ? "₹" : "shares"}
+          className="w-28 rounded-lg border border-white/10 bg-[#0b0e14] px-2 py-1"
+        />
+      ) : null}
+      <button
+        disabled={busy || (kind !== "cash" && !pick)}
+        onClick={() =>
+          act({
+            type: "biz",
+            op: "gift",
+            id: person.id,
+            args: {
+              kind,
+              ref: pick,
+              amount: Number(amount.replace(/[,₹\s]/g, "")) || 0,
+            },
+          })
+        }
+        className="rounded-full border border-amber-200/40 px-3 py-1 text-amber-200 hover:bg-amber-200/10 disabled:opacity-40"
+      >
+        Give to {person.name.split(" ")[0]}
+      </button>
     </div>
   );
 }

@@ -98,18 +98,25 @@ check("treasury asks for the key when locked", /admin key/i.test(locked));
 applyAction(state, { type: "admin", op: "unlock", key: process.env.NEXT_PUBLIC_ADMIN_KEY ?? "aurelion-admin" });
 const unlocked = renderToStaticMarkup(<TreasuryModal state={state} act={act} onClose={() => {}} />);
 check("treasury offers draws once unlocked", /Draw/.test(unlocked) && /Lock the treasury/.test(unlocked));
-check("treasury offers the casino x-ray", /X-ray off/.test(unlocked));
+check("treasury offers the casino x-ray (on by default for the owner)", /X-ray ON/.test(unlocked));
 
-// Mines x-ray: invisible to players, visible to the admin once switched on.
+// Mines x-ray: invisible to players, visible to the admin. Unlocking turns it on;
+// the 👁 toggle on the board (admin only) switches it off and on again.
+const MARK = /hover:border-rose-300\/80/g;
+const marks = (html: string) => (html.match(MARK) ?? []).length;
 if (!state.adv!.mines || state.adv!.mines.status !== "live") applyAction(state, { type: "minesStart", stake: 10_000, mines: 5 });
-const hidden = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
-check("mines hide positions without x-ray", !/bg-rose-500\/\[0\.06\]/.test(hidden));
-applyAction(state, { type: "admin", op: "xray" });
 const xr = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
-check("admin x-ray marks every mine", (xr.match(/bg-rose-500\/\[0\.06\]/g) ?? []).length === state.adv!.mines!.mines);
+check("admin x-ray marks every mine", marks(xr) === state.adv!.mines!.mines);
+check("admin sees the x-ray toggle", /Toggle admin x-ray/.test(xr));
+applyAction(state, { type: "admin", op: "xray" });
+const off = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
+check("toggling x-ray off hides the mines", marks(off) === 0);
+applyAction(state, { type: "admin", op: "xray" });
+check("toggling x-ray back on shows them", marks(renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />)) === state.adv!.mines!.mines);
 applyAction(state, { type: "admin", op: "lock" });
 const relocked = renderToStaticMarkup(<MinesGame state={state} act={act} busy={false} />);
-check("locking the treasury switches x-ray off", !/bg-rose-500\/\[0\.06\]/.test(relocked));
+check("locking the treasury switches x-ray off", marks(relocked) === 0);
+check("players never see the x-ray toggle", !/Toggle admin x-ray/.test(relocked));
 
 console.log(failures === 0 ? "\nUI SMOKE: ALL CHECKS PASSED" : `\nUI SMOKE: ${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

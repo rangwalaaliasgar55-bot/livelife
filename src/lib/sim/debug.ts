@@ -212,9 +212,11 @@ export function adminOp(state: GameState, op: string, key?: string, amount?: num
       if (given !== ADMIN_KEY && !adv.debug) return "Wrong key. The treasury stays locked.";
       if (adv.admin.unlocked) return "Treasury already unlocked.";
       adv.admin.unlocked = true;
+      // the owner's x-ray comes on with the key; toggle it from the Mines board
+      adv.admin.xray = true;
       timeline(state, "Admin access granted to the treasury.", "finance");
       note(state, "Treasury unlocked. Draws are recorded in the ledger.", "good");
-      return "Treasury unlocked. You can now draw funds.";
+      return "Treasury unlocked. You can now draw funds. Casino x-ray is ON (mines are marked on your board only).";
     }
     case "xray":
       if (!adv.admin.unlocked) return "Treasury locked — unlock it first.";

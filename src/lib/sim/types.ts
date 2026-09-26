@@ -1,6 +1,7 @@
 import type { AdvState, Forecast } from "./advanced";
 import type { InteractKind, LifeState } from "./life";
 import type { RouletteBet } from "./casino";
+import type { BizState } from "./biz";
 
 export type GameMode =
   | "normal"
@@ -90,7 +91,15 @@ export type EducationTrack =
   | "journalism"
   | "real_estate"
   | "science"
-  | "vocational";
+  | "vocational"
+  | "data_science"
+  | "cybersecurity"
+  | "nursing"
+  | "aviation"
+  | "hospitality"
+  | "psychology"
+  | "architecture"
+  | "robotics";
 
 export type RelationLevel = "friendly" | "cordial" | "neutral" | "tense" | "hostile";
 
@@ -119,7 +128,7 @@ export interface SkillMap {
 
 export interface EducationRecord {
   id: string;
-  level: "primary" | "secondary" | "vocational" | "college" | "university" | "certification" | "course" | "self";
+  level: "primary" | "secondary" | "vocational" | "college" | "university" | "masters" | "phd" | "certification" | "course" | "self";
   name: string;
   track: EducationTrack;
   institution: string;
@@ -132,6 +141,10 @@ export interface EducationRecord {
   gpa: number;
   completed: boolean;
   inProgress: boolean;
+  /** Professional certification id (level "certification"). */
+  certId?: string;
+  /** Tick the study started — progress is measured in months. */
+  startTick?: number;
 }
 
 export interface JobListing {
@@ -845,6 +858,8 @@ export interface GameState {
   seedLabel?: string;
   /** The BitLife layer: relationships, activities, assets, consequences. */
   life?: LifeState;
+  /** Company HQs, finance firms, casino ops, estates, taxes, jobs market. */
+  biz?: BizState;
 }
 
 export interface NewGameInput {
@@ -994,7 +1009,12 @@ export type PlayerAction =
   | { type: "hiloGuess"; guess: "hi" | "lo" | "skip" }
   | { type: "hiloCashout" }
   | { type: "plinkoDrop"; stake: number; risk: "low" | "medium" | "high" }
-  | { type: "casinoClear"; game: "bj" | "crash" | "hilo" };
+  | { type: "casinoClear"; game: "bj" | "crash" | "hilo" | "vp" | "baccarat" | "wheel" }
+  | { type: "baccaratDeal"; bets: { player?: number; banker?: number; tie?: number } }
+  | { type: "vpDeal"; stake: number }
+  | { type: "vpDraw"; holds: boolean[] }
+  | { type: "wheelSpin"; bets: Record<string, number> }
+  | { type: "biz"; op: string; id?: string; args?: Record<string, unknown> };
 
 export interface FoundPayload {
   name: string;

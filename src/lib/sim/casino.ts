@@ -90,6 +90,14 @@ export interface CasinoState {
   lastSlots?: number[];
   lastPlinko?: { path: number[]; bucket: number; mult: number; risk: string; id: string };
   lastDice?: { roll: number; win: boolean; id: string };
+  baccarat?: BaccaratRound | null;
+  vp?: VideoPokerSession | null;
+  wheel?: {
+    seg: number;
+    id: string;
+    bets: Record<string, number>;
+    win: number;
+  } | null;
 }
 
 export function getCasino(state: GameState): CasinoState {
@@ -524,6 +532,241 @@ export function plinkoDrop(state: GameState, stakeRaw: number, risk: "low" | "me
   return { path, bucket, mult };
 }
 
+/* ------------------------------------------------------------ baccarat */
+
+export interface BaccaratRound {
+  id: string;
+  player: number[];
+  banker: number[];
+  pTotal: number;
+  bTotal: number;
+  winner: "player" | "banker" | "tie";
+  bets: { player: number; banker: number; tie: number };
+  payout: number;
+}
+
+export const bacValue = (c: number) => {
+  const r = cardRank(c);
+  return r >= 10 ? 0 : r;
+};
+export const bacTotal = (cards: number[]) => cards.reduce((s, c) => s + bacValue(c), 0) % 10;
+
+/** Punto banco with the standard tableau. Player 1:1, banker 0.95:1, tie 8:1
+ *  (a tie pushes player and banker bets). Eight-deck shoe. */
+export function baccaratDeal(state: GameState, betsRaw: { player?: number; banker?: number; tie?: number }, log: string[]): BaccaratRound | null {
+  const bets = {
+    player: Math.max(0, Math.round(money(betsRaw.player))),
+    banker: Math.max(0, Math.round(money(betsRaw.banker))),
+    tie: Math.max(0, Math.round(money(betsRaw.tie))),
+  };
+  const total = bets.player + bets.banker + bets.tie;
+  if (total <= 0) {
+    log.push("Put chips on Player, Banker or Tie.");
+    return null;
+  }
+  const stake = wager(state, "Baccarat", total, log);
+  if (!stake) return null;
+  const deck = shoe(freshSeed(state), 8);
+  let pos = 0;
+  const draw = () => deck[pos++]!;
+  const P = [draw(), draw()];
+  const B = [draw(), draw()];
+  const natural = bacTotal(P) >= 8 || bacTotal(B) >= 8;
+  let p3: number | null = null;
+  if (!natural) {
+    if (bacTotal(P) <= 5) {
+      p3 = draw();
+      P.push(p3);
+    }
+    const bt = bacTotal(B);
+    let bDraw: boolean;
+    if (p3 == null) bDraw = bt <= 5;
+    else {
+      const v = bacValue(p3);
+      bDraw = bt <= 2 || (bt === 3 && v !== 8) || (bt === 4 && v >= 2 && v <= 7) || (bt === 5 && v >= 4 && v <= 7) || (bt === 6 && (v === 6 || v === 7));
+    }
+    if (bDraw) B.push(draw());
+  }
+  const pT = bacTotal(P);
+  const bT = bacTotal(B);
+  const winner: BaccaratRound["winner"] = pT > bT ? "player" : bT > pT ? "banker" : "tie";
+  let payout = 0;
+  if (winner === "tie") payout = bets.tie * 9 + bets.player + bets.banker;
+  else if (winner === "player") payout = bets.player * 2;
+  else payout = bets.banker * 1.95;
+  const round_: BaccaratRound = {
+    id: uid("bac"),
+    player: P,
+    banker: B,
+    pTotal: pT,
+    bTotal: bT,
+    winner,
+    bets,
+    payout: round(payout, 2),
+  };
+  getCasino(state).baccarat = round_;
+  settle(
+    state,
+    "Baccarat",
+    stake,
+    payout,
+    `Player ${P.map(cardLabel).join(" ")} (${pT}) vs Banker ${B.map(cardLabel).join(" ")} (${bT}) — ${winner === "tie" ? "tie" : `${winner} wins`}.`,
+    log,
+  );
+  return round_;
+}
+
+/* ------------------------------------------------------------ video poker */
+
+export interface VideoPokerSession {
+  id: string;
+  stake: number;
+  seed: number;
+  hand: number[];
+  held: boolean[];
+  status: "deal" | "done";
+  result?: string;
+  payout?: number;
+}
+
+/** Jacks or Better, full-pay 9/6 table (99.54% RTP with perfect play). */
+export const VP_PAYS: { hand: string; pay: number }[] = [
+  { hand: "Royal Flush", pay: 800 },
+  { hand: "Straight Flush", pay: 50 },
+  { hand: "Four of a Kind", pay: 25 },
+  { hand: "Full House", pay: 9 },
+  { hand: "Flush", pay: 6 },
+  { hand: "Straight", pay: 4 },
+  { hand: "Three of a Kind", pay: 3 },
+  { hand: "Two Pair", pay: 2 },
+  { hand: "Jacks or Better", pay: 1 },
+];
+
+export function vpEvaluate(hand: number[]): { hand: string; pay: number } {
+  const ranks = hand.map(cardRank).sort((a, b) => a - b);
+  const suits = hand.map(cardSuit);
+  const flush = suits.every((x) => x === suits[0]);
+  const uniq = [...new Set(ranks)];
+  const wheel = uniq.length === 5 && ranks.join(",") === "1,2,3,4,5";
+  const broadway = uniq.length === 5 && ranks.join(",") === "1,10,11,12,13";
+  const straight = uniq.length === 5 && (ranks[4]! - ranks[0]! === 4 || wheel || broadway);
+  const counts = Object.values(ranks.reduce<Record<number, number>>((m, r) => ((m[r] = (m[r] ?? 0) + 1), m), {})).sort((a, b) => b - a);
+  const none = { hand: "Nothing", pay: 0 };
+  const find = (h: string) => VP_PAYS.find((x) => x.hand === h)!;
+  if (flush && broadway) return find("Royal Flush");
+  if (flush && straight) return find("Straight Flush");
+  if (counts[0] === 4) return find("Four of a Kind");
+  if (counts[0] === 3 && counts[1] === 2) return find("Full House");
+  if (flush) return find("Flush");
+  if (straight) return find("Straight");
+  if (counts[0] === 3) return find("Three of a Kind");
+  if (counts[0] === 2 && counts[1] === 2) return find("Two Pair");
+  if (counts[0] === 2) {
+    const pair = Number(Object.entries(ranks.reduce<Record<number, number>>((m, r) => ((m[r] = (m[r] ?? 0) + 1), m), {})).find(([, n]) => n === 2)![0]);
+    if (pair === 1 || pair >= 11) return find("Jacks or Better");
+  }
+  return none;
+}
+
+export function vpDeal(state: GameState, stakeRaw: number, log: string[]) {
+  const c = getCasino(state);
+  if (c.vp && c.vp.status === "deal") return void log.push("Finish the hand: choose holds and draw.");
+  const stake = wager(state, "Video Poker", stakeRaw, log);
+  if (!stake) return;
+  const seed = freshSeed(state);
+  const deck = shoe(seed, 1);
+  c.vp = {
+    id: uid("vp"),
+    stake,
+    seed,
+    hand: deck.slice(0, 5),
+    held: [false, false, false, false, false],
+    status: "deal",
+  };
+  const now = vpEvaluate(c.vp.hand);
+  log.push(`Dealt ${c.vp.hand.map(cardLabel).join(" ")}${now.pay ? ` — already ${now.hand}` : ""}. Hold what you want and draw.`);
+}
+
+/** Replacement cards that would come if you draw now (admin x-ray only). */
+export function vpPeek(s: VideoPokerSession): number[] {
+  return shoe(s.seed, 1).slice(5, 10);
+}
+
+export function vpDraw(state: GameState, holds: boolean[], log: string[]) {
+  const c = getCasino(state);
+  const s = c.vp;
+  if (!s || s.status !== "deal") return void log.push("Deal a hand first.");
+  const deck = shoe(s.seed, 1);
+  let next = 5;
+  s.held = [0, 1, 2, 3, 4].map((i) => Boolean(holds?.[i]));
+  s.hand = s.hand.map((card, i) => (s.held[i] ? card : deck[next++]!));
+  const res = vpEvaluate(s.hand);
+  s.status = "done";
+  s.result = res.hand;
+  // the 9/6 table is quoted "for one": Jacks or Better returns your stake,
+  // a flush returns six times it
+  s.payout = s.stake * res.pay;
+  settle(state, "Video Poker", s.stake, s.payout, `${s.hand.map(cardLabel).join(" ")} — ${res.hand}${res.pay ? ` (pays ${res.pay} for 1)` : ""}.`, log);
+}
+
+/* ------------------------------------------------------------ big six wheel */
+
+/** 54 segments: 24×1, 15×2, 7×5, 4×10, 2×20, joker, logo (both 40:1). */
+export const BIG_SIX: {
+  id: string;
+  label: string;
+  pays: number;
+  count: number;
+}[] = [
+  { id: "1", label: "₹1", pays: 1, count: 24 },
+  { id: "2", label: "₹2", pays: 2, count: 15 },
+  { id: "5", label: "₹5", pays: 5, count: 7 },
+  { id: "10", label: "₹10", pays: 10, count: 4 },
+  { id: "20", label: "₹20", pays: 20, count: 2 },
+  { id: "joker", label: "Joker", pays: 40, count: 1 },
+  { id: "logo", label: "Logo", pays: 40, count: 1 },
+];
+/** The physical order of the wheel. */
+export const BIG_SIX_WHEEL: string[] = (() => {
+  // spread each symbol evenly round the rim, rarest first
+  const slots: (string | null)[] = Array.from({ length: 54 }, () => null);
+  const order = [...BIG_SIX].sort((x, y) => x.count - y.count);
+  order.forEach((sym, k) => {
+    for (let j = 0; j < sym.count; j++) {
+      let at = Math.floor((j * 54) / sym.count + k * 3) % 54;
+      while (slots[at]) at = (at + 1) % 54;
+      slots[at] = sym.id;
+    }
+  });
+  return slots as string[];
+})();
+export const bigSixEdge = (id: string) => {
+  const s = BIG_SIX.find((x) => x.id === id)!;
+  return 1 - (s.count / 54) * (s.pays + 1);
+};
+
+export function wheelSpin(state: GameState, betsRaw: Record<string, number>, log: string[]): number | null {
+  const bets: Record<string, number> = {};
+  for (const s of BIG_SIX) {
+    const v = Math.round(money(betsRaw?.[s.id]));
+    if (v > 0) bets[s.id] = v;
+  }
+  const total = Object.values(bets).reduce((a, b) => a + b, 0);
+  if (!total) {
+    log.push("Place a bet on at least one symbol.");
+    return null;
+  }
+  const stake = wager(state, "Big Six", total, log);
+  if (!stake) return null;
+  const seg = Math.floor(rng(state) * BIG_SIX_WHEEL.length);
+  const hit = BIG_SIX_WHEEL[seg]!;
+  const def = BIG_SIX.find((x) => x.id === hit)!;
+  const win = (bets[hit] ?? 0) * (def.pays + 1);
+  getCasino(state).wheel = { seg, id: uid("wh"), bets, win };
+  settle(state, "Big Six", stake, win, `The wheel stopped on ${def.label} (${def.pays}:1).`, log);
+  return seg;
+}
+
 /** House edge summary shown on the floor. */
 export function casinoOdds() {
   return [
@@ -535,5 +778,11 @@ export function casinoOdds() {
     { game: "Hi-Lo", edge: `${(HILO_EDGE * 100).toFixed(0)}% per call` },
     { game: "Plinko", edge: "3% on every risk level" },
     { game: "Mines", edge: "3%" },
+    { game: "Baccarat", edge: "1.06% banker · 1.24% player · 14.4% tie" },
+    {
+      game: "Video Poker",
+      edge: "0.46% with perfect Jacks-or-Better play (9/6)",
+    },
+    { game: "Big Six", edge: "11.1% on ₹1 up to 24.1% on Joker/Logo" },
   ];
 }

@@ -42,7 +42,8 @@ npm run start      # serve it
 | `npm run money-test` | Money audit: every known way a balance used to be destroyed, asserted fixed |
 | `npm run ui-test` | Renders every panel and the new game surfaces to markup (no blank screens) |
 | `npm run life-test` | Life layer: whole lives aged up, events & consequences, prison, death → heir, casino house edges, aircraft economy, takeovers, admin x-ray |
-| `npm test` | typecheck + lint + all four suites |
+| `npm run biz-test` | Business layer: company HQ, banks, FDs, broker, brokerage firm, casino operations, estates & developers, taxes, AI jobs, education, gifts, new casino games; renders the new screens |
+| `npm test` | typecheck + lint + all five suites |
 | `npm run apk` | Static web build (`out/`) + Capacitor sync for Android |
 
 ---
@@ -92,11 +93,43 @@ merely mirrors saves for multi-device sync.
 - **Death & heirs**: when a life ends, a successor continues with the relationship web rebuilt from their point of view.
 
 ### Casino floor (`casino.ts`)
-Eight games, all played move by move from the save's own RNG stream (nothing re-rolls on refresh), with odds and house edge on screen:
+Eleven games, all played move by move from the save's own RNG stream (nothing re-rolls on refresh), with odds and house edge on screen:
 **Blackjack** (6-deck shoe, S17, 3:2, double, basic-strategy hint) · **Roulette** (single zero, full chip table, animated wheel) ·
 **Slots** (3 reels, 95.7% RTP) · **Crash** (live multiplier curve, manual or auto cash-out, 3% edge) · **Hi-Lo** (chain calls, skip,
-cash out) · **Dice** (pick your odds, 1% edge) · **Plinko** (12 rows, low/medium/high risk, 97% RTP) · **Mines**. Gambling builds a
-habit that costs stress and relationships; rehab clears it.
+cash out) · **Dice** (pick your odds, 1% edge) · **Plinko** (12 rows, low/medium/high risk, 97% RTP) · **Mines** ·
+**Baccarat** (8 decks, full third-card rule, banker pays 0.95:1, tie 8:1) · **Video Poker** (Jacks or Better 9/6, hold & draw, 99.5% RTP)
+· **Big Six** (54-segment money wheel, up to 40:1). Gambling builds a habit that costs stress and relationships; rehab clears it.
+
+### Running a casino (`casinoops.ts`) — Casino → Own & run
+Build a resort (₹5 Cr) and run it with real money in and out: table mix (blackjack, roulette, baccarat, poker, craps, big six), slot count and
+hold, bet limits, **staff** by department (dealers, pit bosses, security, surveillance, VIP hosts, cage & cashiers) against what the
+floor needs, comps, marketing, hotel rooms, VIP programme and licence tier. Monthly P&L by game: gross gaming revenue, 25% gaming tax, payroll,
+comps, licence, marketing, hotel, incidents (cheating rings, whale wins, regulator fines). Understaffed floors turn guests away and invite
+cheats; the resort can be sold.
+
+### Company HQ (`company.ts`) — for companies you control
+Headcount by department (engineering, sales, operations, management) with real salaries, pay level and a hiring pipeline; **AI agent
+seats** and their compute bill; GPU nodes and a training budget in the **AI lab**; strategy (steady, aggressive growth, lean cost-cutting,
+premium brand), dividend payout, expansion into new cities, buybacks, debt, and **acquisitions/mergers**. Capacity, demand and cash all bind:
+you cannot sell what your people cannot deliver, and a company that runs out of money bounces payroll.
+
+### Banks, brokers & FDs (`finfirms.ts`)
+Fixed deposits (6–60 months, early-break penalty) · a **personal stockbroker** (hidden skill, real fees and high-water-mark cut) ·
+**your own bank**: deposit and lending rates against the market, risk appetite, staff, branches, marketing, dividends; bad loans,
+capital ratio, regulator warnings and **bank runs**; **buy an existing bank** · **found a brokerage firm**: hire brokers, analysts and
+compliance, set commission, win clients and AUM, survive compliance fines.
+
+### Estates & developers (`estates.ts`)
+Every property you own as a real tenancy: hire a letting agent or a full-service manager, set rent against the market, handle arrears,
+damage and evictions, keep the **condition** up with maintenance and renovations. Hire a **developer** to build apartments, villas,
+offices, a mall or a hotel (cost, time and overrun risk depend on who you hire), then lease or sell the units.
+
+### Taxes, jobs & AI (`civic.ts`)
+Income and capital-gains tax accrue all year and are filed each July: honestly, or under-declared at the risk of an **audit**, penalties
+and a tax debt that compounds. Unemployment benefit and state pension. **AI automation** shrinks hiring by sector and threatens exposed
+jobs; more education (vocational, college, university, **master's, PhD**, new tracks like data science, cybersecurity, nursing,
+robotics) and **professional certifications** protect you and raise pay. **Gifts** (cash, a car, a property, shares) from the person
+card in My Life; large gifts to non-relatives pay a 10% duty.
 
 ### Jets, cars & travel (`lifestyle.ts`)
 - **Aircraft** from a Skylark trainer to a wide-body airliner. Fly it yourself (pilot licence, single-pilot types) or retain a crew. Put
@@ -114,9 +147,10 @@ your group). Low-ball hostile bids for big stakes can trigger a **poison pill** 
 a discount; stakes held by your companies count in net worth.
 
 ### Owner x-ray (secret)
-With the treasury unlocked, the **Casino x-ray** toggle (in the treasury, or triple-tap the Mines title) faintly marks every mine on the
-Mines board and shows the crash point, the dealer's hole card and the next card in Blackjack/Hi-Lo. It is invisible to normal players and
-switches off when the treasury is locked.
+Unlock the treasury with the admin key (triple-tap the header to open it) and the **Casino x-ray** switches on: every mine on the Mines
+board is marked ✕, and the floor shows the crash point, the dealer's hole card, the next card in Blackjack/Hi-Lo and the next draw in
+Video Poker. Toggle it with the admin-only 👁 button on the Mines board, in the treasury, or by triple-tapping the Mines title. Normal
+players never see the marks or the button, and it switches off when the treasury is locked.
 
 ### The money rules (invariants, all asserted by `npm run money-test`)
 - **A payment you cannot cover moves nothing.** An unaffordable bet, tuition, instalment or retainer is refused — the old behaviour drained

@@ -591,7 +591,7 @@ export const JOB_RANKS: { rank: number; title: (ind: string) => string; mult: nu
   { rank: 10, title: () => `Chief Executive Officer`, mult: 8.5, edu: 4, exp: 18 },
 ];
 
-const INDUSTRY_JOB_LABEL: Record<Industry, string> = {
+export const INDUSTRY_JOB_LABEL: Record<Industry, string> = {
   technology: "Technology",
   ai: "AI",
   software: "Software",
@@ -669,6 +669,10 @@ export const FREELANCE_GIGS: { industry: Industry; title: string }[] = [
 ];
 
 export const ACHIEVEMENTS: { id: string; name: string; desc: string }[] = [
+  { id: "doctor", name: "Doctorate", desc: "Complete a PhD." },
+  { id: "developer", name: "Developer", desc: "Complete a property development." },
+  { id: "tax_honest", name: "Model Taxpayer", desc: "File five honest tax returns." },
+  { id: "broker_firm", name: "Wall Street", desc: "Found a brokerage firm." },
   { id: "married", name: "Tied the Knot", desc: "Get married." },
   { id: "parent", name: "Parenthood", desc: "Have or adopt a child." },
   { id: "centenarian", name: "Centenarian", desc: "Live to 100." },
