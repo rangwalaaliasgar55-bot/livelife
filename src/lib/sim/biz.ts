@@ -204,6 +204,16 @@ export interface CasinoOps {
   }[];
   whales: { t: string; name: string; result: number }[];
   cheats: number;
+  /** A tournament or festival: months left and the visit multiplier. */
+  boost?: { months: number; mult: number; label: string };
+  /** VIP junket programme (0–100): whale flow, and whale variance. */
+  junket?: number;
+  /** Dealer and floor training (0–100): service up, incidents down. */
+  training?: number;
+  /** Online licence — a permanent second floor that never closes. */
+  online?: boolean;
+  /** Luxury suites above the ordinary rooms. */
+  suites?: number;
   /** Book value of the building, fit-out and machines. */
   assetValue?: number;
   log?: { t: string; text: string }[];
@@ -218,6 +228,8 @@ export interface CasinoMonth {
   byGame: Record<string, { handle: number; win: number }>;
   hotel: number;
   fnb: number;
+  /** Net of the online floor (revenue less its costs and tax). */
+  online?: number;
   payroll: number;
   comps: number;
   gamingTax: number;
@@ -273,6 +285,241 @@ export interface DevProject {
   stage: "permits" | "construction" | "finishing" | "done";
   delays: number;
   overrun: number;
+}
+
+/* ------------------------------------------------- developer firm (portfolio) */
+
+/** One developer for the whole portfolio: every site, maximum profit. */
+export interface DevFirm {
+  /** Which builder does the work across every property you own. */
+  tier: DevProject["developer"];
+  /** Auto-develop every site that stands still: pick the best scheme, file it,
+   *  pay the deposit and the monthly draws, then dispose of the units. */
+  auto: boolean;
+  /** true = always build the scheme with the highest projected profit;
+   *  false = stick to the chosen kind. */
+  maximize: boolean;
+  /** What the developer does with finished units. */
+  exit: "sell" | "lease";
+  /** Reinvest sale proceeds into the next site automatically. */
+  reinvest: boolean;
+  /** Keep developing even occupied plots (the developer buys out tenants). */
+  redevelop: boolean;
+  /** Counters for the panel. */
+  built: number;
+  invested: number;
+  proceeds: number;
+}
+
+/* ------------------------------------------------------------ government */
+
+export type InfraKind =
+  | "highway"
+  | "rail"
+  | "port"
+  | "airport"
+  | "power"
+  | "water"
+  | "hospital"
+  | "school"
+  | "broadband"
+  | "industrial"
+  | "smartcity"
+  | "stadium";
+
+export type SchemeKind =
+  | "housing"
+  | "jobs"
+  | "food"
+  | "pension"
+  | "health"
+  | "education"
+  | "farmer"
+  | "digital"
+  | "childcare"
+  | "green";
+
+export type LawKind =
+  | "corp_tax_cut"
+  | "corp_tax_hike"
+  | "income_tax_cut"
+  | "labour_reform"
+  | "land_reform"
+  | "press_law"
+  | "emergency"
+  | "conscription"
+  | "nationalisation"
+  | "privatisation"
+  | "deregulation"
+  | "antitrust"
+  | "immigration_open"
+  | "central_bank"
+  | "term_limits"
+  | "digital_id"
+  | "health_service";
+
+export type RegimeType = "democracy" | "dominant" | "emergency" | "dictatorship";
+
+export interface GovProject {
+  id: string;
+  kind: InfraKind;
+  name: string;
+  cityId: string;
+  countryId: string;
+  budget: number;
+  spent: number;
+  progress: number;
+  months: number;
+  scale: number;
+  quality: number;
+  stage: "building" | "stalled" | "done";
+  stalledMonths: number;
+  startYear: number;
+  startMonth: number;
+}
+
+export interface GovScheme {
+  id: string;
+  kind: SchemeKind;
+  countryId: string;
+  /** 0–100: how hard you fund it. Cost and effect both scale with this. */
+  funding: number;
+  monthlyCost: number;
+  months: number;
+  totalSpent: number;
+}
+
+export interface GovLaw {
+  id: string;
+  kind: LawKind;
+  name: string;
+  countryId: string;
+  year: number;
+  month: number;
+  support: number;
+}
+
+export interface CompanyLevy {
+  /** levy = extra tax on turnover, subsidy = paid from treasury,
+   *  exempt = no corporate tax at all, nationalised = the state owns it. */
+  kind: "levy" | "subsidy" | "exempt" | "nationalised";
+  /** % of turnover for a levy/subsidy. */
+  rate: number;
+  collected: number;
+  /** Price paid when the state took it over. */
+  bookValue?: number;
+}
+
+export interface GovDebt {
+  id: string;
+  lender: "market" | "central" | "concord" | "player";
+  principal: number;
+  remaining: number;
+  rate: number;
+  monthly: number;
+  term: number;
+}
+
+/** Money you borrowed from the state treasury, on your own signature. */
+export interface GovPlayerLoan {
+  id: string;
+  principal: number;
+  remaining: number;
+  rate: number;
+  monthly: number;
+  term: number;
+}
+
+export interface WarBattle {
+  t: string;
+  text: string;
+  swing: number;
+  ourLoss: number;
+  theirLoss: number;
+}
+
+export interface WarState {
+  id: string;
+  enemyId: string;
+  countryId: string;
+  objective: "reparations" | "annex" | "regime" | "resources";
+  /** 1 = limited, 2 = full, 3 = total war. */
+  intensity: 1 | 2 | 3;
+  /** −100 = they are at our gates, +100 = we hold their capital. */
+  front: number;
+  occupation: number;
+  ourStrength: number;
+  enemyStrength: number;
+  ourCasualties: number;
+  theirCasualties: number;
+  exhaustion: number;
+  spend: number;
+  startYear: number;
+  startMonth: number;
+  status: "active" | "won" | "lost" | "settled";
+  outcome: string;
+  battles: WarBattle[];
+}
+
+export interface GovTribute {
+  fromId: string;
+  /** Negative = we are the ones paying. */
+  monthly: number;
+  months: number;
+  label: string;
+}
+
+export interface GovState {
+  countryId: string;
+  /** The state's own fund: taxes, your injections, borrowing, tribute. */
+  treasury: number;
+  projects: GovProject[];
+  schemes: GovScheme[];
+  laws: GovLaw[];
+  levies: Record<string, CompanyLevy>;
+  debt: GovDebt[];
+  loans: GovPlayerLoan[];
+  wars: WarState[];
+  tribute: GovTribute[];
+  defence: {
+    /** ₹ per month voted to the military. */
+    budget: number;
+    readiness: number;
+    equipment: number;
+    personnel: number;
+  };
+  regime: {
+    type: RegimeType;
+    electionsSuspended: boolean;
+    pressFreedom: number;
+    secretPolice: number;
+    legitimacy: number;
+    unrest: number;
+    coups: number;
+    since: number;
+  };
+  /** 0–100: how hard the world is sanctioning you. */
+  sanctions: number;
+  /** Paper over the state's books; rises when you raid the treasury. */
+  corruption: number;
+  /** Permanent gdpGrowth bonus bought with completed infrastructure. */
+  growthBonus: number;
+  stats: {
+    injected: number;
+    borrowed: number;
+    repaid: number;
+    invested: number;
+    levied: number;
+    tributeIn: number;
+    tributeOut: number;
+    built: number;
+    warsWon: number;
+    warsLost: number;
+    annexed: string[];
+  };
+  monthly: { revenue: number; spending: number; net: number } | null;
+  history: { t: string; treasury: number; approval: number; growth: number }[];
+  log: { t: string; text: string }[];
 }
 
 /* ------------------------------------------------------------ taxes */
@@ -331,6 +578,10 @@ export interface BizState {
   aiJobsLost: number;
   jobsTick: number;
   gifts: { t: string; to: string; what: string; value: number }[];
+  /** One developer for every property you own (portfolio-level automation). */
+  devFirm?: DevFirm;
+  /** The machinery of government, when you hold the country. */
+  gov?: GovState;
 }
 
 export function blankTax(year: number): TaxBook {
@@ -385,6 +636,7 @@ export function getBiz(state: GameState): BizState {
   b.benefits ??= { unemployment: false, since: 0, paid: 0, pension: 0 };
   b.certs ??= [];
   b.gifts ??= [];
+  b.devFirm ??= { tier: "reputable", auto: false, maximize: true, exit: "sell", reinvest: true, redevelop: false, built: 0, invested: 0, proceeds: 0 };
   return b;
 }
 

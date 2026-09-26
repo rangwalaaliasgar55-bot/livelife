@@ -178,6 +178,8 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
   const slotF = clamp(1.25 - ops.slotHold * 3, 0.5, 1.2);
   const econ = country.gdpGrowth > 0 ? 1.04 : 0.86;
   const compsF = 0.85 + ops.comps * 0.8;
+  const eventF = ops.boost && ops.boost.months > 0 ? ops.boost.mult : 1;
+  const trainF = 1 + money(ops.training) / 260;
   const demand =
     (city.population * 0.0035 + city.population * city.tourism * 0.00005) *
     mkt *
@@ -185,7 +187,10 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
     minBetF *
     econ *
     compsF *
-    (ops.hotelRooms ? 1 + Math.min(0.4, ops.hotelRooms / 800) : 1);
+    trainF *
+    eventF *
+    (ops.hotelRooms ? 1 + Math.min(0.4, ops.hotelRooms / 800) : 1) *
+    (ops.suites ? 1 + Math.min(0.35, ops.suites / 120) : 1);
   const visits = Math.round(Math.min(demand, capacity));
   const turnedAway = Math.max(0, demand - capacity);
 
@@ -227,11 +232,15 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
     theo += handle * ops.slotHold;
   }
   // --- whales: the variance that makes or breaks a month
-  const whaleChance = ops.vip ? 0.45 + Math.min(0.3, ops.staff.hosts * 0.04) : 0.04;
-  const whaleCount = chance(r, whaleChance) ? 1 + (chance(r, 0.35) ? 1 : 0) + (ops.vip && chance(r, 0.2) ? 1 : 0) : 0;
+  const junket = money(ops.junket);
+  const whaleChance =
+    (ops.vip ? 0.45 + Math.min(0.3, ops.staff.hosts * 0.04) : 0.04) + (ops.vip ? junket / 260 : junket / 600);
+  const whaleCount = chance(r, clamp(whaleChance, 0, 0.95))
+    ? 1 + (chance(r, 0.35) ? 1 : 0) + (ops.vip && chance(r, 0.2) ? 1 : 0) + (junket > 60 && chance(r, 0.3) ? 1 : 0)
+    : 0;
   for (let i = 0; i < whaleCount; i++) {
     const hands = 120 + Math.round(r() * 200);
-    const bet = ops.maxBet * (0.4 + r() * 0.6);
+    const bet = ops.maxBet * (0.4 + r() * 0.6) * (1 + junket / 180);
     const handle = bet * hands;
     const result = handle * 0.012 + normal(r, 0, bet * Math.sqrt(hands) * 1.05);
     ggr += result;
@@ -261,21 +270,36 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
 
   // --- side businesses
   const occ = clamp(0.45 + city.tourism / 220 + ops.reputation / 400, 0.3, 0.95);
-  const hotel = ops.hotelRooms * occ * 30 * monthWage * 0.07;
+  const hotel = (ops.hotelRooms * 1 + money(ops.suites) * 3.5) * occ * 30 * monthWage * 0.07;
   const fnb = visits * monthWage * 0.006; // bars and restaurants: ~₹400 a head
+  // --- the online floor: open every hour, thin margin, no dealers
+  let onlineGgr = 0;
+  let onlineHandle = 0;
+  if (ops.online) {
+    onlineHandle = (visits * 0.8 + city.population * 0.0008) * monthWage * 0.5 * mkt * rep * (1 + junket / 400);
+    const edge = 0.045 + money(ops.slotHold) * 0.1;
+    onlineGgr = onlineHandle * edge + normal(r, 0, onlineHandle * edge * 0.35);
+  }
 
   // --- costs
-  const payroll = STAFF_IDS.reduce((s, k) => s + ops.staff[k] * monthWage * STAFF_DEFS[k].pay, 0);
+  const payroll =
+    STAFF_IDS.reduce((s, k) => s + ops.staff[k] * monthWage * STAFF_DEFS[k].pay, 0) * (1 + money(ops.training) / 420);
+  const junketCost = junket * monthWage * 1.2;
+  const onlineCost = ops.online ? onlineHandle * 0.09 + monthWage * 40 : 0;
   const compsCost = Math.max(0, theo) * ops.comps;
   const gamingTax = Math.max(0, ggr) * 0.25;
   const licence = ops.licence === "premium" ? 1_500_000 : 500_000;
-  const upkeep = ops.slots * 3000 + tableCount(ops) * 20000 + 600000 + ops.hotelRooms * monthWage * 0.02;
+  const upkeep =
+    ops.slots * 3000 + tableCount(ops) * 20000 + 600000 + (ops.hotelRooms + money(ops.suites) * 2) * monthWage * 0.02;
   const sideCosts = hotel * 0.55 + fnb * 0.7;
   let incidents = 0;
   const notes: string[] = [];
   // cheating rings vs security & surveillance
-  const guard = (ops.staff.security / Math.max(1, need.security)) * 0.5 + (ops.staff.surveillance / Math.max(1, need.surveillance)) * 0.5;
-  if (chance(r, 0.07 * clamp(1.6 - guard, 0.2, 1.6))) {
+  const guard =
+    (ops.staff.security / Math.max(1, need.security)) * 0.5 +
+    (ops.staff.surveillance / Math.max(1, need.surveillance)) * 0.5 +
+    money(ops.training) / 400;
+  if (chance(r, 0.07 * clamp((1.6 - guard) * (1 - money(ops.training) / 300), 0.1, 1.6))) {
     const loss = round(handleTotal * (0.004 + r() * 0.015), 0);
     const caught = chance(r, clamp(guard * 0.55, 0.05, 0.9));
     if (caught) {
@@ -302,8 +326,10 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
       notes.push("A regulator audit came back clean.");
     }
   }
-  const costs = payroll + compsCost + gamingTax + licence + ops.marketing + upkeep + sideCosts + incidents;
-  const revenue = ggr + hotel + fnb;
+  const onlineTax = Math.max(0, onlineGgr) * 0.28;
+  const costs =
+    payroll + compsCost + gamingTax + licence + ops.marketing + upkeep + sideCosts + incidents + junketCost + onlineCost + onlineTax;
+  const revenue = ggr + hotel + fnb + onlineGgr;
   const net = revenue - costs;
 
   // --- reputation drifts with service and comps
@@ -312,10 +338,25 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
     clamp(ops.staff.pit / Math.max(1, need.pit), 0, 1.2) * 0.2 +
     clamp(ops.staff.security / Math.max(1, need.security), 0, 1.2) * 0.3;
   ops.reputation = clamp(
-    ops.reputation + (service - 0.9) * 2 + ops.comps * 2 - 0.3 - (turnedAway > demand * 0.2 ? 0.8 : 0) + (ops.slotHold > 0.12 ? -0.4 : 0),
+    ops.reputation +
+      (service - 0.9) * 2 +
+      money(ops.training) / 260 +
+      ops.comps * 2 -
+      0.3 -
+      (turnedAway > demand * 0.2 ? 0.8 : 0) +
+      (ops.slotHold > 0.12 ? -0.4 : 0) +
+      (ops.online && !ops.vip ? -0.15 : 0),
     0,
     100,
   );
+  // event boost decays month by month
+  if (ops.boost) {
+    ops.boost.months -= 1;
+    if (ops.boost.months <= 0) {
+      notes.push(`${ops.boost.label} has ended.`);
+      ops.boost = undefined;
+    }
+  }
 
   // --- money: the owner eats the result either way
   const mf = state;
@@ -328,7 +369,7 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
     if (paid.short > 0) note(state, `${c.name} lost ${formatINR(-net)} this month and you could only cover ${formatINR(paid.paid)}.`, "bad");
   }
   if (Math.abs(net) > 5e7) ledger(state, `${c.name} month`, net);
-  c.volume = round(handleTotal, 0);
+  c.volume = round(handleTotal + onlineHandle, 0);
   c.revenue = round(ggr, 0);
   c.costs = round(costs, 0);
   c.staff = STAFF_IDS.reduce((s, k) => s + ops.staff[k], 0);
@@ -343,6 +384,7 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
     byGame,
     hotel: round(hotel, 0),
     fnb: round(fnb, 0),
+    online: round(onlineGgr - onlineCost - onlineTax, 0),
     payroll: round(payroll, 0),
     comps: round(compsCost, 0),
     gamingTax: round(gamingTax, 0),
@@ -368,6 +410,161 @@ function tickOneCasino(state: GameState, c: CasinoBiz) {
 
 export function tickCasinoOps(state: GameState) {
   for (const c of state.world.casinos) tickOneCasino(state, c);
+}
+
+/* ------------------------------------------------- extras: events, junkets,
+   training, the online floor and suites. Each one is paid for in real money
+   and each one changes the monthly P&L — nothing here is cosmetic. */
+
+export type CasinoExtra = "event" | "junket" | "training" | "online" | "suite" | "odds" | "security" | "comps";
+
+export const CASINO_EXTRAS: Record<
+  CasinoExtra,
+  { name: string; blurb: string; unit: string; cost: (monthWage: number, level: number) => number }
+> = {
+  event: {
+    name: "Host a tournament or festival",
+    blurb: "Three months of +35% footfall and a reputation bump. Costs double your monthly marketing, once.",
+    unit: "one-off",
+    cost: (m) => 0,
+  },
+  junket: {
+    name: "VIP junket programme",
+    blurb: "Fly high rollers in. Bigger handle, wilder variance, and a permanent monthly bill. Needs the VIP programme.",
+    unit: "0–100",
+    cost: (m, l) => round(l * m * 6, 0),
+  },
+  training: {
+    name: "Dealer & floor training",
+    blurb: "Every 10 points lifts service and cuts incidents. Payroll rises slightly; so does reputation.",
+    unit: "10 pts",
+    cost: (m, l) => round(l * m * 30, 0),
+  },
+  online: {
+    name: "Online gaming licence",
+    blurb: "A second floor that never closes: real handle, real variance, 28% tax. Needs a premium licence.",
+    unit: "one-off",
+    cost: () => 80_000_000,
+  },
+  suite: {
+    name: "Build luxury suites",
+    blurb: "Suites earn three and a half times a normal room and pull VIPs. ₹1.5 Cr each to build.",
+    unit: "suites",
+    cost: (_m, l) => round(l * 15_000_000, 0),
+  },
+  odds: {
+    name: "Hold tuning",
+    blurb: "Push the slot hold up (more win, fewer guests) or down (fuller floor, thinner margin).",
+    unit: "±0.5%",
+    cost: () => 0,
+  },
+  security: {
+    name: "Surveillance upgrade",
+    blurb: "Hire surveillance staff above the floor's requirement. Cheating rings get caught more often.",
+    unit: "staff",
+    cost: (m, l) => round(l * m * 3, 0),
+  },
+  comps: {
+    name: "Comps policy",
+    blurb: "Comps are a share of theoretical win handed back. More comps, more loyalty, less cash.",
+    unit: "±5%",
+    cost: () => 0,
+  },
+};
+
+export function casinoExtra(state: GameState, casinoId: string, what: CasinoExtra, level: number, log: string[]) {
+  const c = state.world.casinos.find((x) => x.id === casinoId);
+  if (!c) return;
+  const ops = getCasinoOps(state, c);
+  const monthWage = (state.world.cities.find((x) => x.id === c.cityId)?.avgWage ?? 800000) / 12;
+  const lv = clamp(Math.round(level) || 1, -20, 100);
+  const pay = (amt: number, whatTxt: string) => {
+    if (amt <= 0) return true;
+    if (!spend(state.player, amt, `${whatTxt} · ${c.name}`, "casino", dt(state))) {
+      log.push(`${whatTxt} costs ${formatINR(amt)} — not enough cash.`);
+      return false;
+    }
+    bizFlow(state, "casinoCapex", -amt);
+    return true;
+  };
+  switch (what) {
+    case "event": {
+      const cost = round(ops.marketing * 2, 0);
+      if (!pay(cost, "Tournament & festival")) return;
+      ops.boost = { months: 3, mult: 1.35, label: "The tournament" };
+      ops.reputation = clamp(ops.reputation + 3, 0, 100);
+      log.push(`The ${c.name} tournament is on: three months of +35% footfall for ${formatINR(cost)}.`);
+      break;
+    }
+    case "junket": {
+      if (!ops.vip) {
+        log.push("Start the VIP programme first — a junket needs hosts and a premium licence.");
+        return;
+      }
+      const want = clamp(lv, 0, 100);
+      const cost = CASINO_EXTRAS.junket.cost(monthWage, Math.max(0, want - money(ops.junket)));
+      if (!pay(cost, "Junket programme")) return;
+      ops.junket = want;
+      log.push(
+        `Junket programme set to ${want}: ${formatINR(cost)} up front and ${formatINR(want * monthWage * 1.2)}/month. Expect bigger whales — and bigger swings.`,
+      );
+      break;
+    }
+    case "training": {
+      const pts = clamp(lv, 0, 100);
+      const cur = money(ops.training);
+      const add = Math.max(0, pts - cur);
+      const cost = CASINO_EXTRAS.training.cost(monthWage, add);
+      if (cost > 0 && !pay(cost, "Floor training")) return;
+      ops.training = clamp(Math.max(cur, pts), 0, 100);
+      log.push(`Floor training at ${Math.round(ops.training)}/100${cost ? ` for ${formatINR(cost)}` : ""}. Service up, incidents down, payroll +${((ops.training / 420) * 100).toFixed(1)}%.`);
+      break;
+    }
+    case "online": {
+      if (ops.licence !== "premium") {
+        log.push("The regulator will only grant an online permit to a premium licence holder.");
+        return;
+      }
+      if (ops.online) {
+        log.push("The online floor is already licensed and running.");
+        return;
+      }
+      if (!pay(CASINO_EXTRAS.online.cost(monthWage, 1), "Online gaming licence")) return;
+      ops.online = true;
+      log.push("Online licence granted. The floor never closes — and the 28% online tax starts this month.");
+      news(state, `${c.name} opens an online floor`, "The gaming regulator has licensed an internet operation alongside the resort.", "business", c.countryId, "Online handle adds revenue with its own variance.");
+      break;
+    }
+    case "suite": {
+      const n = clamp(lv, 1, 60);
+      const cost = CASINO_EXTRAS.suite.cost(monthWage, n);
+      if (!pay(cost, `${n} luxury suite(s)`)) return;
+      ops.suites = clamp(money(ops.suites) + n, 0, 400);
+      addAsset(ops, cost * 0.8);
+      log.push(`${n} suite(s) built for ${formatINR(cost)}. Suites earn 3.5× a standard room and pull VIPs.`);
+      break;
+    }
+    case "odds": {
+      const delta = lv * 0.005;
+      ops.slotHold = clamp(round(ops.slotHold + delta, 4), 0.02, 0.25);
+      ops.reputation = clamp(ops.reputation - Math.abs(lv) * 0.6 + (delta < 0 ? 1.2 : 0), 0, 100);
+      log.push(`Slot hold now ${(ops.slotHold * 100).toFixed(1)}%. ${delta > 0 ? "More win per spin, thinner crowd." : "Fuller floor, thinner margin."}`);
+      break;
+    }
+    case "security": {
+      const n = clamp(lv, 1, 20);
+      const cost = CASINO_EXTRAS.security.cost(monthWage, n);
+      if (!pay(cost, "Surveillance upgrade")) return;
+      ops.staff.surveillance += n;
+      log.push(`${n} surveillance staff added for ${formatINR(cost)} setup. Cheating rings are more likely to be caught.`);
+      break;
+    }
+    case "comps": {
+      ops.comps = clamp(round(ops.comps + lv * 0.05, 3), 0, 0.6);
+      log.push(`Comps policy now ${(ops.comps * 100).toFixed(0)}% of theoretical win.`);
+      break;
+    }
+  }
 }
 
 /* ------------------------------------------------------------ management */

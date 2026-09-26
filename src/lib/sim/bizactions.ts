@@ -27,6 +27,7 @@ import {
 } from "./company";
 import {
   bankBranch,
+  bankBranchMax,
   bankCapital,
   bankSet,
   breakFD,
@@ -41,11 +42,44 @@ import {
   sellBank,
   sellBrokerage,
 } from "./finfirms";
-import { casinoManage, sellCasino, type CasinoPatch } from "./casinoops";
-import { cancelProject, evict, listForSale, setEstateAuto, setManager, setRentAmount, setUnitsMode, startProject } from "./estates";
+import { casinoManage, casinoExtra, sellCasino, type CasinoPatch } from "./casinoops";
+import {
+  cancelProject,
+  evict,
+  listForSale,
+  setDevFirm,
+  setEstateAuto,
+  setManager,
+  setRentAmount,
+  setUnitsMode,
+  startProject,
+} from "./estates";
+import {
+  declareWar,
+  govBorrow,
+  govRepay,
+  injectTreasury,
+  nationalise,
+  passLaw,
+  regimeMove,
+  repayStateLoan,
+  seizeAssets,
+  setDefence,
+  setLevy,
+  setScheme,
+  skimTreasury,
+  startInfra,
+  cancelInfra,
+  stateLoan,
+  warMove,
+  type RegimeMove,
+  type WarMove,
+} from "./statecraft";
 import { claimBenefit, giftTo, startCert } from "./civic";
 
 export type BizArgs = Record<string, unknown>;
+
+const clampInt = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
 
 const num = (v: unknown, d = 0) => {
   const n = typeof v === "number" ? v : Number(v);
@@ -137,6 +171,7 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
         log,
       );
     case "bankBranch":
+      if (str(a.delta) === "max" || str(a.delta) === "all") return bankBranchMax(state, id, log, num(a.reserve));
       return bankBranch(state, id, num(a.delta, 1), log);
     case "bankCapital":
       return bankCapital(state, id, num(a.amount), log);
@@ -188,6 +223,16 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
       if (a.licence === "premium" || a.licence === "standard") patch.licence = a.licence;
       return casinoManage(state, id, patch, log);
     }
+    case "casinoExtra":
+      return casinoExtra(
+        state,
+        id,
+        (["event", "junket", "training", "online", "suite", "odds", "security", "comps"].includes(str(a.what))
+          ? str(a.what)
+          : "event") as "event" | "junket" | "training" | "online" | "suite" | "odds" | "security" | "comps",
+        num(a.level, 1),
+        log,
+      );
     case "sellCasino":
       return sellCasino(state, id, log);
 
@@ -210,11 +255,74 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
         str(a.developer, "reputable") as DevProject["developer"],
         a.units != null ? num(a.units) : undefined,
         log,
+        Boolean(a.force),
+      );
+    case "devFirm":
+      return setDevFirm(
+        state,
+        {
+          ...(a.tier != null ? { tier: str(a.tier, "reputable") as DevProject["developer"] } : {}),
+          ...(a.auto != null ? { auto: Boolean(a.auto) } : {}),
+          ...(a.maximize != null ? { maximize: Boolean(a.maximize) } : {}),
+          ...(a.reinvest != null ? { reinvest: Boolean(a.reinvest) } : {}),
+          ...(a.redevelop != null ? { redevelop: Boolean(a.redevelop) } : {}),
+          ...(a.exit != null ? { exit: (a.exit === "lease" ? "lease" : "sell") as "sell" | "lease" } : {}),
+        },
+        log,
       );
     case "estCancel":
       return cancelProject(state, id, log);
     case "estUnits":
       return setUnitsMode(state, id, (["rent", "sale", "off"].includes(str(a.mode)) ? a.mode : "rent") as "rent" | "sale" | "off", log);
+
+    /* --- government: the country you run */
+    case "govInject":
+      return injectTreasury(state, num(a.amount), log);
+    case "govBorrow":
+      return govBorrow(
+        state,
+        (["market", "central", "concord"].includes(str(a.source)) ? a.source : "market") as "market" | "central" | "concord",
+        num(a.amount),
+        log,
+      );
+    case "govDebtRepay":
+      return govRepay(state, str(a.debtId), num(a.amount), log);
+    case "govLoan":
+      return stateLoan(state, num(a.amount), num(a.term, 60), log);
+    case "govLoanRepay":
+      return repayStateLoan(state, str(a.loanId), num(a.amount), log);
+    case "govSkim":
+      return skimTreasury(state, num(a.amount), log);
+    case "govInfra":
+      return startInfra(state, str(a.kind, "highway") as never, str(a.cityId), num(a.scale, 1), log);
+    case "govInfraCancel":
+      return cancelInfra(state, str(a.projectId), log);
+    case "govScheme":
+      return setScheme(state, str(a.kind) as never, num(a.funding, 50), log);
+    case "govLaw":
+      return passLaw(state, str(a.kind) as never, log);
+    case "govLevy":
+      return setLevy(state, str(a.companyId), str(a.levy, "levy") as never, num(a.rate, 5), log);
+    case "govNationalise":
+      return nationalise(state, str(a.companyId), log);
+    case "govSeize":
+      return seizeAssets(state, str(a.companyId), log);
+    case "govDefence":
+      return setDefence(
+        state,
+        {
+          ...(a.budget != null ? { budget: num(a.budget) } : {}),
+          ...(a.equipment != null ? { equipment: num(a.equipment) } : {}),
+          ...(a.personnel != null ? { personnel: num(a.personnel) } : {}),
+        },
+        log,
+      );
+    case "govWar":
+      return declareWar(state, str(a.enemyId), str(a.objective, "reparations") as never, clampInt(num(a.intensity, 2), 1, 3) as 1 | 2 | 3, log);
+    case "govWarMove":
+      return warMove(state, str(a.warId), str(a.move, "hold") as WarMove, log);
+    case "govRegime":
+      return regimeMove(state, str(a.move, "emergency") as RegimeMove, num(a.level, 20), log);
 
     /* --- government, education, gifts */
     case "claimBenefit":
@@ -236,4 +344,25 @@ export function applyBiz(state: GameState, op: string, id: string, a: BizArgs, l
 }
 
 /** Actions that make no sense from a prison cell. */
-export const BIZ_PRISON_BLOCKED = new Set(["foundBrokerage", "buyBank", "hireBroker", "estDevelop", "hqAcquire", "hqExpand", "cert"]);
+export const BIZ_PRISON_BLOCKED = new Set([
+  "foundBrokerage",
+  "buyBank",
+  "hireBroker",
+  "estDevelop",
+  "hqAcquire",
+  "hqExpand",
+  "cert",
+  "govInject",
+  "govBorrow",
+  "govLoan",
+  "govSkim",
+  "govInfra",
+  "govScheme",
+  "govLaw",
+  "govLevy",
+  "govNationalise",
+  "govSeize",
+  "govWar",
+  "govWarMove",
+  "govRegime",
+]);

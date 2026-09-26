@@ -17,6 +17,7 @@ import { LifeView } from "./LifeView";
 import { CasinoFloor } from "./CasinoFloor";
 import { LifestyleView } from "./LifestyleView";
 import { CorporatePanel } from "./CorporatePanel";
+import { StateView, WarView } from "./StateView";
 
 export function Panels({
   view,
@@ -32,6 +33,8 @@ export function Panels({
   if (view === "mylife") return <LifeView state={state} act={act} busy={busy} />;
   if (view === "casino") return <CasinoFloor state={state} act={act} busy={busy} />;
   if (view === "hq") return <CompanyHQView state={state} act={act} />;
+  if (view === "gov") return <StateView state={state} act={act} />;
+  if (view === "war") return <WarView state={state} act={act} />;
   if (view === "finance") return <FinanceHub state={state} act={act} />;
   if (view === "estates") return <EstatesView state={state} act={act} />;
   if (view === "civic") return <CivicView state={state} act={act} />;
@@ -639,7 +642,7 @@ function Business({ state, act }: { state: GameState; act: (a: PlayerAction) => 
           </Btn>
           {ind==="ai" ? <span className="text-[11px] text-[var(--muted)] self-center">AI companies get compute/model quality, and cheaper hiring of SEO/handlers via agency.</span> : null}
         </div>
-        <p className="text-[11px] text-[var(--muted)] mt-2">Buy AI shares directly in Media → AI companies, or here via distressed buys. Your agency's SEO will auto-promote your AI product.</p>
+        <p className="text-[11px] text-[var(--muted)] mt-2">Buy AI shares directly in Media → AI companies, or here via distressed buys. Your agency&apos;s SEO will auto-promote your AI product.</p>
       </Card>
       <Card>
         <Label>For sale / distressed</Label>
@@ -1058,7 +1061,11 @@ function Politics({ state, act }: { state: GameState; act: (a: PlayerAction) => 
           <Btn kind="ghost" disabled={p.politics.role!=="head"} onClick={()=>void act({type:"hireSecurity", level:1})}>Hire security ₹1.8L (+18)</Btn>
           <Btn kind="ghost" disabled={p.politics.role!=="head"} onClick={()=>void act({type:"assumePower"})}>Assume full power</Btn>
         </div>
-        <p className="text-[11px] text-[var(--muted)] mt-1">Full power also unlocks instant policy on the Cabinet levers above and minister appointments with zero opposition.</p>
+        <p className="text-[11px] text-[var(--muted)] mt-1">
+          Full power also unlocks instant policy on the Cabinet levers above and minister appointments with zero opposition. The{" "}
+          <b>Government</b> screen is where you actually run the country once you hold it — treasury, borrowing, infrastructure, schemes, laws and
+          per-company taxes — and <b>War &amp; Defence</b> is where the army and the front line live.
+        </p>
       </Card>
     </div>
   );
@@ -1126,7 +1133,7 @@ function Media({ state, act }: { state: GameState; act: (a: PlayerAction) => voi
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <Label>Pulse networks — real views, real growth, real money</Label>
-        <p className="text-xs text-[var(--muted)]">Every post generates <b>views</b> → views pay <b>ad revenue</b> (CPM). Followers grow from engagement + your team's SEO/handlers. Brand deals trigger at 8k+ followers. Your agency promotes your companies automatically.</p>
+        <p className="text-xs text-[var(--muted)]">Every post generates <b>views</b> → views pay <b>ad revenue</b> (CPM). Followers grow from engagement + your team&apos;s SEO/handlers. Brand deals trigger at 8k+ followers. Your agency promotes your companies automatically.</p>
         <div className="mt-2 flex gap-2 text-xs">
           <span className="rounded-full border border-emerald-500/30 px-3 py-1">Followers {totalFollowers.toLocaleString()}</span>
           <span className="rounded-full border border-sky-500/30 px-3 py-1">Views {Number(totalViews).toLocaleString()}</span>

@@ -16,7 +16,8 @@
     "ui-test": "tsx scripts/ui-smoke.tsx",
     "life-test": "tsx scripts/life-smoke.ts",
     "biz-test": "tsx scripts/biz-smoke.ts",
-    "test": "npm run typecheck && npm run lint && npm run sim-test && npm run money-test && npm run ui-test && npm run life-test && npm run biz-test"
+    "test": "npm run typecheck && npm run lint && npm run sim-test && npm run money-test && npm run ui-test && npm run life-test && npm run biz-test && npm run state-test",
+    "state-test": "tsx scripts/state-smoke.ts"
   },
   "dependencies": {
     "@capacitor/android": "8.5.2",

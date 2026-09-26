@@ -5,8 +5,8 @@
 // place in condition and handles evictions. Hire a developer to turn land into
 // apartments, offices, a mall, villas or a hotel; then lease or sell the units.
 import type { GameState, PropertyHolding } from "./types";
-import { bizFlow, bizQueue, getBiz, pushLog, type DevProject, type EstateOps, type ManagerTier } from "./biz";
-import { credit, money, spend, spendUpTo } from "./finance";
+import { bizFlow, bizQueue, getBiz, pushLog, type DevFirm, type DevProject, type EstateOps, type ManagerTier } from "./biz";
+import { credit, liquidCash, money, spend, spendUpTo } from "./finance";
 import { note, timeline, unlock } from "./feed";
 import { rng } from "./engine";
 import { queueHandlers, taxGain } from "./civic";
@@ -302,6 +302,8 @@ export function startProject(
   developer: DevProject["developer"],
   units: number | undefined,
   log: string[],
+  /** The developer buys out a sitting tenant and files the paperwork itself. */
+  force = false,
 ) {
   const prop = mine(state, propId, log);
   if (!prop) return;
@@ -312,8 +314,19 @@ export function startProject(
   }
   if (!DEV_KINDS[kind] || !DEVELOPERS[developer]) return;
   if (e.tenant) {
-    log.push("Evict or wait out the tenant before redeveloping.");
-    return;
+    if (!force) {
+      log.push("Evict or wait out the tenant before redeveloping.");
+      return;
+    }
+    const buyout = round(prop.rent * 3, 0);
+    const paid = spendUpTo(state.player, buyout, `Tenant buyout · ${prop.name}`, "property", dt(state));
+    bizFlow(state, "estateRepairs", -paid.paid);
+    pushLog(e.log, dt(state), `Developer bought out ${e.tenant.name} for ${formatINR(paid.paid)}.`);
+    e.tenant = null;
+    if (paid.short > 0) {
+      log.push(`The developer couldn't cover the ${formatINR(buyout)} tenant buyout.`);
+      return;
+    }
   }
   const q = devQuote(state, prop, kind, developer, units);
   const deposit = round(q.budget * 0.1, 0);
@@ -447,6 +460,8 @@ function tickProperty(state: GameState, prop: PropertyHolding) {
         const proceeds = round(n * u.unitValue * 0.98, 0);
         credit(state.player, proceeds, `Sold ${n} unit(s) · ${prop.name}`, "property", dt(state));
         bizFlow(state, "unitSales", proceeds);
+        const firm = getBiz(state).devFirm;
+        if (firm) firm.proceeds += proceeds;
         taxGain(state, n * u.unitValue * 0.35);
         prop.value = Math.max(0, prop.value - n * u.unitValue);
         pushLog(e.log, dt(state), `Sold ${n} unit(s) for ${formatINR(proceeds)}.`);
@@ -639,6 +654,14 @@ function finishProject(state: GameState, prop: PropertyHolding, e: EstateOps) {
   e.listed = "rent";
   prop.rent = round(pj.units * e.units.unitRent, 0);
   prop.occupancy = 0;
+  const firm = getBiz(state).devFirm;
+  if (firm) {
+    firm.built += 1;
+    if (firm.auto) {
+      e.listed = firm.exit === "sell" ? "sale" : "rent";
+      prop.rent = firm.exit === "lease" ? round(pj.units * e.units.unitRent, 0) : 0;
+    }
+  }
   pushLog(e.log, dt(state), `Completed: ${pj.units} units worth ${formatINR(uv)} each.`);
   timeline(state, `Completed a ${pj.units}-unit ${k.name.toLowerCase()} (${formatINR(pj.units * uv)} of units).`, "property");
   note(state, `${prop.name} is complete: ${pj.units} units at ${formatINR(uv)} each. Lease them or list them for sale.`, "good");
@@ -676,6 +699,94 @@ queueHandlers.est = (state, _kind, data) => {
   }
 };
 
+/* ------------------------------------------------- one developer, every site */
+
+export function getDevFirm(state: GameState) {
+  return getBiz(state).devFirm!;
+}
+
+export function setDevFirm(state: GameState, patch: Partial<DevFirm>, log: string[]) {
+  const f = getDevFirm(state);
+  if (patch.tier) f.tier = patch.tier;
+  if (patch.auto != null) f.auto = Boolean(patch.auto);
+  if (patch.maximize != null) f.maximize = Boolean(patch.maximize);
+  if (patch.reinvest != null) f.reinvest = Boolean(patch.reinvest);
+  if (patch.redevelop != null) f.redevelop = Boolean(patch.redevelop);
+  if (patch.exit) f.exit = patch.exit;
+  // switching the developer on does the first pass immediately: sites are
+  // surveyed and filed the moment you hand the portfolio over
+  if (f.auto) tickDevFirm(state);
+  log.push(
+    f.auto
+      ? `${DEVELOPERS[f.tier].name} now runs the whole portfolio: every idle site is surveyed, the most profitable scheme is filed, deposits and monthly draws are paid, and finished units are ${f.exit === "sell" ? "sold" : "leased"}${f.redevelop ? " — occupied plots included" : ""}.`
+      : `Portfolio developer switched off. You file projects yourself again.`,
+  );
+}
+
+/** The most profitable scheme for a site, given a builder. */
+export function bestScheme(state: GameState, prop: PropertyHolding, tier: DevProject["developer"]) {
+  let best: { kind: DevProject["kind"]; q: ReturnType<typeof devQuote> } | null = null;
+  for (const k of Object.keys(DEV_KINDS) as DevProject["kind"][]) {
+    const q = devQuote(state, prop, k, tier);
+    if (q.units < 1) continue;
+    if (!best || q.profit > best.q.profit) best = { kind: k, q };
+  }
+  return best;
+}
+
+/** What the portfolio developer would do next on every site you own. */
+export function devFirmPlan(state: GameState) {
+  const f = getDevFirm(state);
+  return state.player.properties.map((prop) => {
+    const e = getEstate(state, prop);
+    const plan = bestScheme(state, prop, f.tier);
+    const blocked = e.project && e.project.stage !== "done" ? "building" : e.units ? "units" : e.tenant && !f.redevelop ? "tenant" : null;
+    return { prop, estate: e, plan, blocked, deposit: plan ? round(plan.q.budget * 0.1, 0) : 0 };
+  });
+}
+
+/** One developer for the whole portfolio: file, fund, build, dispose, repeat. */
+export function tickDevFirm(state: GameState) {
+  const f = getDevFirm(state);
+  if (!f || !f.auto) return;
+  const cash = liquidCash(state.player);
+  let budgetLeft = f.reinvest ? cash : Math.max(0, cash * 0.6);
+  for (const prop of [...state.player.properties]) {
+    const e = getEstate(state, prop);
+    // finished units: dispose the way the developer was told to, then start again
+    if (e.units) {
+      const mode = f.exit === "sell" ? "sale" : "rent";
+      if (e.listed !== mode && e.units.sold < e.units.built) e.listed = mode;
+      if (!(f.reinvest && e.units.sold >= e.units.built && e.units.built > 0)) continue;
+      // every unit disposed of: the developer clears the site and rebuilds
+      e.units = null;
+      e.listed = "off";
+      pushLog(e.log, dt(state), "Site cleared for the next scheme.");
+    }
+    if (e.project && e.project.stage !== "done") continue;
+    if (e.tenant && !f.redevelop) continue;
+    const best = bestScheme(state, prop, f.tier);
+    if (!best || best.q.profit <= 0) continue;
+    const deposit = round(best.q.budget * 0.1, 0);
+    const monthly = best.q.monthly;
+    // only commit when the deposit and six months of draws are covered
+    if (deposit + monthly * 6 > budgetLeft) continue;
+    const before = state.player.properties.length;
+    startProject(state, prop.id, best.kind, f.tier, best.q.units, [], f.redevelop);
+    if (state.player.properties.length !== before) continue;
+    const e2 = getEstate(state, prop);
+    if (!e2.project) continue;
+    budgetLeft -= deposit + monthly * 6;
+    f.invested += deposit;
+    note(
+      state,
+      `${DEVELOPERS[f.tier].name} started a ${best.q.units}-unit ${DEV_KINDS[best.kind].name.toLowerCase()} at ${prop.name} — budget ${formatINR(best.q.budget)}, projected profit ${formatINR(best.q.profit)}.`,
+      "good",
+    );
+  }
+}
+
 export function tickEstates(state: GameState) {
+  tickDevFirm(state);
   for (const prop of [...state.player.properties]) tickProperty(state, prop);
 }

@@ -9,8 +9,7 @@
 //  • fixed deposits with an early-break penalty.
 import type { BankInst, Decision, GameState } from "./types";
 import { bizFlow, getBiz, type BankOps, type Brokerage, type BrokerTier, type FixedDeposit, type PersonalBroker } from "./biz";
-import { credit, money, spend, spendUpTo } from "./finance";
-import { liquidCash } from "./finance";
+import { credit, liquidCash, money, spend, spendUpTo } from "./finance";
 import { history, news, note, timeline, unlock } from "./feed";
 import { ledger } from "./advanced";
 import { rng } from "./engine";
@@ -295,6 +294,31 @@ export function bankSet(
   );
 }
 
+/** Fit-out cost of one branch. No cap on how many you may open. */
+export const BRANCH_COST = 5_000_000;
+
+/** How many branches bank capital plus your own money can open right now. */
+export function branchAffordable(state: GameState, bankId: string, reserve = 0): number {
+  const b = state.world.banks.find((x) => x.id === bankId && x.playerOwned);
+  if (!b) return 0;
+  const pool = Math.max(0, money(b.capital)) + Math.max(0, liquidCash(state.player) - Math.max(0, reserve));
+  return Math.max(0, Math.floor(pool / BRANCH_COST));
+}
+
+/** +MAX: open every branch the bank and your own money can pay for, in one go. */
+export function bankBranchMax(state: GameState, bankId: string, log: string[], reserve = 0) {
+  const b = state.world.banks.find((x) => x.id === bankId && x.playerOwned);
+  if (!b) return;
+  const n = branchAffordable(state, bankId, reserve);
+  if (n <= 0) {
+    log.push(
+      `A branch costs ${formatINR(BRANCH_COST)}. The bank holds ${formatINR(b.capital)} and you have ${formatINR(liquidCash(state.player))} — not enough for one. Inject capital or wait for deposits.`,
+    );
+    return;
+  }
+  bankBranch(state, bankId, n, log);
+}
+
 export function bankBranch(state: GameState, bankId: string, delta: number, log: string[]) {
   const b = state.world.banks.find((x) => x.id === bankId && x.playerOwned);
   if (!b) return;
@@ -302,7 +326,7 @@ export function bankBranch(state: GameState, bankId: string, delta: number, log:
   const d = Math.round(delta);
   if (d === 0) return;
   if (d > 0) {
-    const costEach = 5_000_000;
+    const costEach = BRANCH_COST;
     const cost = costEach * d;
     // unlimited branches: try bank capital first, then let owner top-up from own cash
     if (b.capital >= cost) {

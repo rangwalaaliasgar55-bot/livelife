@@ -43,6 +43,7 @@ npm run start      # serve it
 | `npm run ui-test` | Renders every panel and the new game surfaces to markup (no blank screens) |
 | `npm run life-test` | Life layer: whole lives aged up, events & consequences, prison, death → heir, casino house edges, aircraft economy, takeovers, admin x-ray |
 | `npm run biz-test` | Business layer: company HQ, banks, FDs, broker, brokerage firm, casino operations, estates & developers, taxes, AI jobs, education, gifts, new casino games; renders the new screens |
+| `npm run state-test` | Country-leader layer: treasury, borrowing, state loans, infrastructure, schemes, laws, per-company taxes, nationalisation, coups, war; the bank `+MAX` branch fix and the portfolio developer |
 | `npm test` | typecheck + lint + all five suites |
 | `npm run apk` | Static web build (`out/`) + Capacitor sync for Android |
 
@@ -100,12 +101,49 @@ cash out) · **Dice** (pick your odds, 1% edge) · **Plinko** (12 rows, low/medi
 **Baccarat** (8 decks, full third-card rule, banker pays 0.95:1, tie 8:1) · **Video Poker** (Jacks or Better 9/6, hold & draw, 99.5% RTP)
 · **Big Six** (54-segment money wheel, up to 40:1). Gambling builds a habit that costs stress and relationships; rehab clears it.
 
+### Government & statecraft (`statecraft.ts`) — Government · War & Defence
+Win the country and the whole machine is yours to run, with its own books:
+
+- **A national treasury, separate from your money.** It receives a share of current receipts, plus levies, tribute and whatever you
+  inject. It pays for schemes, construction, the army, the war and the debt — and when it cannot pay, the central bank covers the gap at a
+  penalty rate.
+- **Put money in, take money out, borrow.** Inject your own cash (it buys approval and party machinery), borrow from markets, the central
+  bank or the Concord (debt/GDP moves the spread), borrow **from the state** on your own signature at half the market rate — or skim the
+  treasury, which is theft and is recorded as corruption, heat and unrest.
+- **Build anything.** Twelve programmes — expressways, high-speed rail, deep-water ports, airports, generation, water, hospitals, schools,
+  broadband, industrial parks, smart cities, stadiums — at 1× to 10× scale. Each is paid for monthly; a project you cannot fund stalls,
+  and the effects land only when it opens (infrastructure, permanent growth, tech, health, education, jobs, transit, housing supply).
+- **Government schemes.** Ten recurring programmes (housing, jobs guarantee, food security, pensions, health, education, farm support,
+  digital governance, childcare, renewables) funded 0–100%. They work slowly and they never stop costing money.
+- **A legislature that can say no.** Seventeen laws — tax cuts and surcharges, labour and land reform, press licensing, emergency powers,
+  conscription, nationalisation, privatisation, deregulation, antitrust, immigration, central-bank capture, term limits, digital identity,
+  a health service. Support comes from your seats, your popularity, the members you have patronised and your corruption. Losing a vote
+  costs approval.
+- **Tax any company, one at a time.** A turnover levy on any firm (or a subsidy, or a full exemption), **nationalisation** at sixty per
+  cent of valuation once the framework is law, or an outright **seizure** of its cash. Every board in the country repriced you yesterday.
+- **An army you pay for.** Budget, equipment and personnel build readiness; power is GDP, population, technology, infrastructure, allies
+  and exhaustion, not a slider.
+- **War, fought month by month.** Declare it with an objective (reparations, annexation, regime change, resource rights) and an intensity.
+  The front moves on a real strength comparison with real variance: breakthroughs, dispatches, casualties, occupation, exhaustion,
+  sanctions from a world that disapproves. Win and the tribute arrives monthly; annex and you take GDP and population permanently. Lose and
+  you pay reparations, lose a quarter of your approval, and the cabinet meets without you.
+- **The road to personal rule.** Emergency powers suspend elections; censorship and internal security buy quiet at the price of
+  legitimacy; dissolving the chamber cuts opposition seats; and with security 45+ and popularity 50+ you can replace the constitution
+  with **personal rule**, where every law passes by decree and every election is cancelled. Unrest and legitimacy run a coup clock that
+  never stops — and the decision it raises has three options, none of them good.
+
 ### Running a casino (`casinoops.ts`) — Casino → Own & run
 Build a resort (₹5 Cr) and run it with real money in and out: table mix (blackjack, roulette, baccarat, poker, craps, big six), slot count and
 hold, bet limits, **staff** by department (dealers, pit bosses, security, surveillance, VIP hosts, cage & cashiers) against what the
 floor needs, comps, marketing, hotel rooms, VIP programme and licence tier. Monthly P&L by game: gross gaming revenue, 25% gaming tax, payroll,
 comps, licence, marketing, hotel, incidents (cheating rings, whale wins, regulator fines). Understaffed floors turn guests away and invite
 cheats; the resort can be sold.
+
+**Extras, all paid for and all visible in the P&L:** host a **tournament or festival** (three months of +35% footfall), run a **VIP junket
+programme** (bigger whales, wilder variance, a permanent monthly bill), **train the floor** (service up, incidents down, payroll up),
+license an **online floor** that never closes (its own handle, variance and 28% tax — premium licence required), build **luxury suites**
+(3.5× a standard room, and they pull VIPs), tune the **slot hold** up or down, add **surveillance** staff above the floor requirement, and
+set the **comps** policy.
 
 ### Company HQ (`company.ts`) — for companies you control
 Headcount by department (engineering, sales, operations, management) with real salaries, pay level and a hiring pipeline; **AI agent
@@ -117,12 +155,19 @@ you cannot sell what your people cannot deliver, and a company that runs out of 
 Fixed deposits (6–60 months, early-break penalty) · a **personal stockbroker** (hidden skill, real fees and high-water-mark cut) ·
 **your own bank**: deposit and lending rates against the market, risk appetite, staff, branches, marketing, dividends; bad loans,
 capital ratio, regulator warnings and **bank runs**; **buy an existing bank** · **found a brokerage firm**: hire brokers, analysts and
-compliance, set commission, win clients and AUM, survive compliance fines.
+compliance, set commission, win clients and AUM, survive compliance fines. Branches have **no upper limit** — `+MAX` opens every branch
+the bank's capital plus your own cash can fit out in one click (or keep a reserve, or type a number), each one costing ₹50 L up front and
+about ₹1.5 L a month with roughly three staff.
 
 ### Estates & developers (`estates.ts`)
 Every property you own as a real tenancy: hire a letting agent or a full-service manager, set rent against the market, handle arrears,
 damage and evictions, keep the **condition** up with maintenance and renovations. Hire a **developer** to build apartments, villas,
 offices, a mall or a hotel (cost, time and overrun risk depend on who you hire), then lease or sell the units.
+
+**One developer for the whole portfolio.** Hand every property to a single firm and it never asks you again: every idle site is surveyed,
+the scheme with the **highest projected profit** is filed, the deposit and the monthly draws are paid from your cash, occupied plots are
+bought out, finished units are sold or leased, and when a site is sold out it is cleared and rebuilt. The panel shows exactly what it
+would build next on each property and what it would earn.
 
 ### Taxes, jobs & AI (`civic.ts`)
 Income and capital-gains tax accrue all year and are filed each July: honestly, or under-declared at the risk of an **audit**, penalties
@@ -178,6 +223,8 @@ players never see the marks or the button, and it switches off when the treasury
 - 10 countries with full fiscal models: GDP cycles, Taylor-rule rates, inflation, unemployment, debt, tax policy
 - **Credit ratings** (AAA–CCC) for companies and countries, derived from balance sheets, feeding loan pricing
 - Elections with real opponents, parties, polls, campaigns; if you win, **policy has economic consequences**
+- **Run the country** — treasury, borrowing, infrastructure, schemes, laws, per-company taxes, nationalisation, armies, wars, and the
+  coup clock (see *Government & statecraft*)
 - **Concord of Nations** — UN-style body: resolutions, blocs, agencies, votes
 - International travel, visas, residency, second citizenship, foreign assets
 
@@ -243,13 +290,15 @@ src/lib/sim/          # the simulation — pure TypeScript, no UI, no server
   casino.ts           # blackjack, roulette, slots, crash, hi-lo, dice, plinko
   lifestyle.ts        # cars, yachts, aircraft (charter/lease/fly), vacations
   corporate.ts        # stakes, tender offers, control, poison pills
+  statecraft.ts       # government: treasury, borrowing, infrastructure, schemes,
+                      # laws, per-company taxes, nationalisation, armies, war, coups
   debug.ts            # hidden developer tools + the owner treasury (gated)
 src/lib/store.ts      # client-first persistence: localStorage + optional server mirror
                       # (newer-copy-wins, save repair, sync status)
 src/lib/persist.ts    # server persistence: Postgres (drizzle) or file store fallback
 src/lib/filestore.ts  # write-aware file store: SAVE_DIR → .saves → tmp → memory
 src/components/game/  # the UI (panels, overlays, Mines board, My Life, Casino floor,
-                      # Jets/Cars/Travel, Stakes & Takeovers, app shell)
+                      # Jets/Cars/Travel, Stakes & Takeovers, Government & War, app shell)
 scripts/              # static export build + the four test suites
 android/              # Capacitor Android project
 ```

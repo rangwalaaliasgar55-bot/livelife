@@ -23,8 +23,8 @@ import {
   roleSalary,
   STRATEGIES,
 } from "@/lib/sim/company";
-import { bankMarket, bankValue, BROKER_HIRE, BROKER_TIERS, brokerageValue, capitalRatio, fdRate, getBankOps, staffNeed } from "@/lib/sim/finfirms";
-import { DEV_KINDS, DEVELOPERS, devQuote, getEstate, MANAGERS, marketRent } from "@/lib/sim/estates";
+import { bankMarket, bankValue, branchAffordable, BRANCH_COST, BROKER_HIRE, BROKER_TIERS, brokerageValue, capitalRatio, fdRate, getBankOps, staffNeed } from "@/lib/sim/finfirms";
+import { bestScheme, DEV_KINDS, DEVELOPERS, devFirmPlan, devQuote, getDevFirm, getEstate, MANAGERS, marketRent } from "@/lib/sim/estates";
 import { aiJobPressure, allTracks, benefitQuote, CERTS, jobAiRisk, quoteTax, STUDY_LEVELS } from "@/lib/sim/civic";
 import { industryMeta } from "@/lib/sim/catalog";
 import { liquidCash } from "@/lib/sim/finance";
@@ -763,6 +763,7 @@ function BankCard({ state, act, bankId }: { state: GameState; act: Act; bankId: 
     dividendPct: String(Math.round(ops.dividendPct * 100)),
   }));
   const L = ops.last;
+  const [branchN, setBranchN] = useState("50");
   return (
     <Card>
       <Label>Your bank · {bank.name}</Label>
@@ -829,26 +830,35 @@ function BankCard({ state, act, bankId }: { state: GameState; act: Act; bankId: 
         </Btn>
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
-        <span className="tick w-full">Branches — no limit (₹50 L fit-out each)</span>
-        {[1,5,10].map(n=>(
+        <span className="tick w-full">
+          Branches — no upper limit ({formatINR(BRANCH_COST)} fit-out each) · affordable right now{" "}
+          <b className="text-amber-200">{branchAffordable(state, bank.id)}</b> (bank capital + your cash)
+        </span>
+        {[1, 5, 10, 25, 100].map((n) => (
           <Btn key={n} kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: n })}>
-            +{n} {n===1?"Branch": "Branches"}
+            +{n}
           </Btn>
         ))}
-        <Btn kind="gold" onClick={() => {
-          const maxBank = Math.floor((bank.capital)/5000000);
-          const maxWithCash = Math.floor((bank.capital + liquidCash(state.player))/5000000);
-          const max = Math.max(maxBank, maxWithCash);
-          const want = Math.max(1, Math.min(200, max));
-          if (want>0) biz("bankBranch", bank.id, { delta: want });
-        }}>
-          + MAX ({Math.floor((bank.capital + liquidCash(state.player))/5000000)})
+        <Btn kind="gold" onClick={() => biz("bankBranch", bank.id, { delta: "max" })}>
+          + MAX ({branchAffordable(state, bank.id)})
         </Btn>
+        <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: "max", reserve: liquidCash(state.player) * 0.2 })}>
+          + MAX, keep 20% cash
+        </Btn>
+        <div className="flex w-full items-end gap-2">
+          <Field label="Branches to open">
+            <Input value={branchN} onChange={(e) => setBranchN(e.target.value)} inputMode="numeric" />
+          </Field>
+          <Btn onClick={() => biz("bankBranch", bank.id, { delta: Math.max(1, Math.round(num(branchN))) })}>Open</Btn>
+        </div>
         <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: -1 })}>
           −1
         </Btn>
         <Btn kind="ghost" onClick={() => biz("bankBranch", bank.id, { delta: -5 })}>
           −5
+        </Btn>
+        <Btn kind="danger" onClick={() => biz("bankBranch", bank.id, { delta: -Math.floor(bank.branches / 4) })}>
+          Close 25%
         </Btn>
       </div>
       <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -971,6 +981,7 @@ export function EstatesView({ state, act }: { state: GameState; act: Act }) {
   );
   return (
     <div className="space-y-4">
+      <DevFirmCard state={state} act={act} />
       <div className="grid gap-3 md:grid-cols-3">
         <Stat label="Portfolio value" value={formatINR(total.value)} sub={`${props.length} properties`} />
         <Stat label="Rent collected / month" value={formatINR(total.rent)} />
@@ -982,6 +993,92 @@ export function EstatesView({ state, act }: { state: GameState; act: Act }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/** One developer for the whole portfolio — the "develop everything, maximise
+ *  profit" switch, with the plan it would carry out on every site. */
+function DevFirmCard({ state, act }: { state: GameState; act: Act }) {
+  const biz = useBiz(act);
+  const firm = getDevFirm(state);
+  const plan = devFirmPlan(state);
+  const ready = plan.filter((p) => !p.blocked && p.plan && p.plan.q.profit > 0);
+  const upside = ready.reduce((s, p) => s + (p.plan?.q.profit ?? 0), 0);
+  const cash = liquidCash(state.player);
+  const deposits = ready.reduce((s, p) => s + p.deposit, 0);
+  return (
+    <Card>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <Label>Your developer · one firm for every property</Label>
+        <span className="text-xs text-[var(--muted)]">
+          {DEVELOPERS[firm.tier].name} · {firm.built} project{firm.built === 1 ? "" : "s"} delivered · {formatINR(firm.proceeds)} of unit sales
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-[var(--muted)]">
+        Hire one builder and it runs the whole portfolio: every idle site is surveyed, the scheme with the highest projected profit is filed, the deposit and
+        the monthly draws are paid from your cash, and the finished units are {firm.exit === "sell" ? "sold" : "leased"}. You never open each property again.
+      </p>
+      <div className="mt-2 grid grid-cols-2 gap-x-4 text-sm md:grid-cols-4">
+        <Row k="Sites ready to build" v={`${ready.length} of ${plan.length}`} tone={ready.length ? "good" : "muted"} />
+        <Row k="Projected profit if all built" v={formatINR(upside)} tone={upside > 0 ? "good" : "bad"} />
+        <Row k="Deposits + 6 months of draws" v={formatINR(ready.reduce((s, p) => s + p.deposit + (p.plan?.q.monthly ?? 0) * 6, 0))} />
+        <Row k="Your cash" v={formatINR(cash)} tone={deposits > cash ? "bad" : "good"} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {(Object.keys(DEVELOPERS) as DevProject["developer"][]).map((t) => (
+          <Btn key={t} kind={firm.tier === t ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { tier: t })}>
+            {DEVELOPERS[t].name}
+          </Btn>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px] text-[var(--muted)]">{DEVELOPERS[firm.tier].blurb}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Btn kind={firm.auto ? "teal" : "gold"} onClick={() => biz("devFirm", "", { auto: !firm.auto })}>
+          {firm.auto ? "Developer handles every site ✓" : "Hand the portfolio to the developer"}
+        </Btn>
+        <Btn kind={firm.maximize ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { maximize: !firm.maximize })}>
+          {firm.maximize ? "Maximum profit ✓" : "Maximise profit"}
+        </Btn>
+        <Btn kind={firm.exit === "sell" ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { exit: "sell" })}>
+          Sell the units
+        </Btn>
+        <Btn kind={firm.exit === "lease" ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { exit: "lease" })}>
+          Lease the units
+        </Btn>
+        <Btn kind={firm.reinvest ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { reinvest: !firm.reinvest })}>
+          {firm.reinvest ? "Reinvest proceeds ✓" : "Reinvest proceeds"}
+        </Btn>
+        <Btn kind={firm.redevelop ? "teal" : "ghost"} onClick={() => biz("devFirm", "", { redevelop: !firm.redevelop })}>
+          {firm.redevelop ? "Buys out tenants ✓" : "Also redevelop occupied plots"}
+        </Btn>
+      </div>
+      <div className="mt-3">
+        <p className="tick">What it would build next</p>
+        <div className="mt-1 max-h-64 space-y-1 overflow-y-auto text-xs">
+          {plan.map((p) => (
+            <div key={p.prop.id} className="flex items-center justify-between gap-2 border-t border-white/5 py-1">
+              <span className="min-w-0 truncate">
+                {p.prop.name}
+                <span className="ml-1 text-[var(--muted)]">
+                  {p.blocked
+                    ? p.blocked === "building"
+                      ? "— on site"
+                      : p.blocked === "units"
+                        ? `— ${p.estate.units?.built} units`
+                        : "— tenant in place"
+                    : p.plan
+                      ? `— ${DEV_KINDS[p.plan.kind].name} · ${p.plan.q.units} units`
+                      : "— nothing viable"}
+                </span>
+              </span>
+              <span className={p.plan && p.plan.q.profit > 0 ? "text-teal-300" : "text-[var(--muted)]"}>
+                {p.plan ? `${formatINR(p.plan.q.profit)} · ${formatINR(p.deposit)} deposit` : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -1139,6 +1236,15 @@ function EstateCard({ state, act, prop }: { state: GameState; act: Act; prop: Pr
           <Row k="Sale value when done" v={formatINR(q.gdv)} />
           <Row k="Developer's profit estimate" v={formatINR(q.profit)} tone={q.profit >= 0 ? "good" : "bad"} />
           <Btn onClick={() => biz("estDevelop", prop.id, { kind, developer: dev })}>Hire developer</Btn>
+          <Btn
+            kind="teal"
+            onClick={() => {
+              const best = bestScheme(state, prop, dev);
+              if (best) biz("estDevelop", prop.id, { kind: best.kind, developer: dev, units: best.q.units, force: true });
+            }}
+          >
+            Most profitable scheme{e.tenant ? " (buys out the tenant)" : ""}
+          </Btn>
         </div>
       )}
       <LogList items={e.log} />

@@ -30,6 +30,8 @@ const NAV: { id: string; label: string; group: string }[] = [
   { id: "world", label: "World Map", group: "World" },
   { id: "civic", label: "Taxes, Jobs & AI", group: "World" },
   { id: "politics", label: "Politics", group: "World" },
+  { id: "gov", label: "Government", group: "World" },
+  { id: "war", label: "War & Defence", group: "World" },
   { id: "concord", label: "Concord", group: "World" },
   { id: "media", label: "Media & Pulse", group: "World" },
   { id: "casino", label: "Casino", group: "World" },
@@ -72,6 +74,10 @@ const VIEW_HELP: Record<string, string> = {
   opps: "Grants, jobs, properties, businesses for sale, investors and auctions. Opportunities expire — so does patience.",
   world: "Ten countries with real economies. Search the atlas, travel, apply for residency, convert currency.",
   politics: "Parties, elections with opponents, bills and — if you win — policy with economic consequences.",
+  gov:
+    "Run the country you hold: a national treasury separate from your own money, borrowing from markets, the central bank or the Concord (or from yourself), infrastructure you fund month by month, welfare schemes with a running cost, a legislature that can defeat your laws, per-company levies, subsidies, nationalisation and seizure — and the road from emergency powers to personal rule, with a coup clock that never stops.",
+  war:
+    "The army is a budget, a readiness level and a pile of equipment. Compare your strength with every country on the map, declare war with an objective and an intensity, then fight it month by month on a front line: breakthroughs, casualties, exhaustion, sanctions — and reparations, annexation or defeat at the end of it.",
   concord: "The fictional UN-style body: resolutions, agencies, blocs and votes.",
   media: "Found outlets, post on social platforms, manage your brand and face the press.",
   under: "The fictional gambling economy and the criminal path. Odds are shown; house edge always is.",
