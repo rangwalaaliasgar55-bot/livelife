@@ -65,8 +65,9 @@ applyAction(state, { type: "findLove", where: "app" });
 
 const VIEWS = [
   "life", "career", "staff", "bank", "markets", "property", "business", "opps", "world",
-  "politics", "concord", "media", "under", "analysis", "cashflow", "research", "stats",
-  "calendar", "news", "legacy", "mylife", "casino", "lifestyle", "takeovers",
+  "politics", "gov", "war", "concord", "media", "under", "analysis", "cashflow", "research", "stats",
+  "calendar", "news", "legacy", "mylife", "casino", "lifestyle", "takeovers", "hq", "finance",
+  "estates", "civic",
 ];
 
 for (const view of VIEWS) {

@@ -23,6 +23,7 @@ import { tickFinFirms } from "./finfirms";
 import { tickCasinoOps } from "./casinoops";
 import { tickEstates } from "./estates";
 import { accrueTax, completeStudy, studyDone, tickCivic } from "./civic";
+import { getGov, tickStatecraft } from "./statecraft";
 import { getBiz } from "./biz";
 import type {
   Country,
@@ -206,6 +207,23 @@ function tickCountry(state: GameState, c: Country) {
   }
 
   if (c.electionYear === state.time.year && state.time.month === 5) {
+    const g = state.biz?.gov;
+    if (g && g.countryId === c.id && g.regime.electionsSuspended) {
+      c.electionYear = state.time.year + (c.government === "guided" ? 6 : 4);
+      news(
+        state,
+        `${c.name}: the poll is off`,
+        `Elections have been suspended by decree. The next one is scheduled for ${c.electionYear} — nobody believes that date.`,
+        "politics",
+        c.id,
+        "Suspended elections cut legitimacy and add unrest every month.",
+      );
+      return;
+    }
+    if (g && g.countryId === c.id && g.regime.type === "dictatorship") {
+      const mine = state.world.parties.find((p) => p.id === state.player.politics.partyId);
+      if (mine) mine.popularity = clamp(mine.popularity + 45, 3, 95);
+    }
     runElection(state, c);
   }
 }
@@ -1006,6 +1024,7 @@ function tickBiz(state: GameState) {
   tickCasinoOps(state);
   tickEstates(state);
   tickCivic(state);
+  tickStatecraft(state);
 }
 
 function tickHealth(state: GameState) {

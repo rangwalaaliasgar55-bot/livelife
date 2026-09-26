@@ -717,6 +717,11 @@ export const ACHIEVEMENTS: { id: string; name: string; desc: string }[] = [
   { id: "oracle", name: "Oracle", desc: "Win three market forecasts." },
   { id: "cabinet", name: "Inner Circle", desc: "Employ a full staff of advisors." },
   { id: "auctioneer", name: "Vulture", desc: "Win a distressed asset at auction." },
+  { id: "builder", name: "Public Works", desc: "Complete a national infrastructure project." },
+  { id: "statecraft", name: "The Levers", desc: "Pass a law of your own." },
+  { id: "victory", name: "Triumph", desc: "Win a war." },
+  { id: "conqueror", name: "Conqueror", desc: "Annex territory from another country." },
+  { id: "dictator", name: "Supreme", desc: "Replace the constitution with personal rule." },
 ];
 
 export const BACKGROUNDS = [

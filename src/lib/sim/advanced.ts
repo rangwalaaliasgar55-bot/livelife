@@ -578,6 +578,11 @@ const FLOW_LABELS: Record<string, string> = {
   brokerage: "Your brokerage firm",
   casinoCapex: "Casino fit-out & sales",
   unitSales: "Property & unit sales",
+  govInject: "Money into the state treasury",
+  govLoan: "State loan drawn",
+  govRepay: "State loan repaid",
+  govComp: "Compensation received",
+  govSkim: "Money out of the state treasury",
 };
 
 const INCOME_KEYS = new Set([
@@ -590,6 +595,9 @@ const INCOME_KEYS = new Set([
   "hqDividends",
   "brokerage",
   "unitSales",
+  "govLoan",
+  "govComp",
+  "govSkim",
 ]);
 
 export const flowLabel = (key: string) => FLOW_LABELS[key] ?? key;

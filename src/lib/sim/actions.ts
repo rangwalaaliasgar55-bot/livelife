@@ -1,6 +1,7 @@
 import { ADVISOR_DEFS, CHALLENGE_DEFS, companyRating, forecastLabel, getAdv, GOAL_DEFS, ledger, RESEARCH_TOPICS, hasAdvisor } from "./advanced";
 import { BILL_TOPICS, INDUSTRIES, SKILLS, TRACKS, industryMeta } from "./catalog";
 import { devOp } from "./debug";
+import { resolveStatecraft } from "./statecraft";
 import { history, news, note, rng, tickMonths, timeline, unlock } from "./engine";
 import { computeNetWorth, credit, liquidCash, money, monthlyLoanPayment, spend } from "./finance";
 import { MINES_PRESETS, MINES_TILES, minesLayout, minesView, newMinesSession } from "./mines";
@@ -2346,6 +2347,7 @@ function resolveDecision(state: GameState, decisionId: string, optionId: string,
   if (d.kind === "corp") return void resolveCorp(state, d, optionId, log);
   if (d.kind === "bankcap") return void resolveBankCap(state, d, optionId, log);
   if (d.kind === "estate") return void resolveEstate(state, d, optionId, log);
+  if (d.kind === "coup") return void resolveStatecraft(state, "coup", optionId, log);
   if (d.kind === "investor") {
     const co = state.world.companies.find((c) => c.id === d.context.companyId);
     if (!co) return;

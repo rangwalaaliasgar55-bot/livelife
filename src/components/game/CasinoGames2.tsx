@@ -4,7 +4,7 @@
 // real against the save's RNG — plus the owner's console for running a casino.
 import { useEffect, useRef, useState } from "react";
 import { BIG_SIX, BIG_SIX_WHEEL, bigSixEdge, cardLabel, cardRed, VP_PAYS, vpEvaluate, vpPeek, type CasinoState } from "@/lib/sim/casino";
-import { casinoNeeds, casinoValue, getCasinoOps, STAFF_DEFS, STAFF_IDS, TABLE_DEFS, TABLE_IDS } from "@/lib/sim/casinoops";
+import { CASINO_EXTRAS, casinoNeeds, casinoValue, getCasinoOps, STAFF_DEFS, STAFF_IDS, TABLE_DEFS, TABLE_IDS } from "@/lib/sim/casinoops";
 import type { GameState, PlayerAction } from "@/lib/sim/types";
 import { formatINR } from "@/lib/sim/util";
 import { Btn, Card, Field, Input, Label, Select, Spark } from "./ui";
@@ -382,6 +382,7 @@ function CasinoConsole({ state, act, casinoId }: { state: GameState; act: Act; c
             {row("Gross gaming win", formatINR(L.ggr), L.ggr >= L.theo ? "text-teal-300" : "text-rose-300")}
             {row("Theoretical win", formatINR(L.theo))}
             {row("Hotel + food & drink", formatINR(L.hotel + L.fnb))}
+            {row("Online floor", formatINR(L.online ?? 0), (L.online ?? 0) >= 0 ? "text-teal-300" : "text-rose-300")}
             {row("Payroll", `−${formatINR(L.payroll)}`)}
             {row("Comps", `−${formatINR(L.comps)}`)}
             {row("Gaming tax (25% of GGR)", `−${formatINR(L.gamingTax)}`)}
@@ -517,6 +518,65 @@ function CasinoConsole({ state, act, casinoId }: { state: GameState; act: Act; c
         >
           Apply staffing
         </Btn>
+      </Card>
+
+      <Card>
+        <Label>Events, junkets, training &amp; the online floor</Label>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Everything here is paid for in real money and shows up in next month&apos;s P&amp;L. Nothing is cosmetic.
+        </p>
+        <div className="mt-2 grid grid-cols-2 gap-x-4">
+          <div className="flex justify-between border-t border-white/5 py-1 text-sm">
+            <span className="text-[var(--muted)]">Event boost</span>
+            <span>{ops.boost ? `${ops.boost.mult.toFixed(2)}× · ${ops.boost.months} mo` : "—"}</span>
+          </div>
+          <div className="flex justify-between border-t border-white/5 py-1 text-sm">
+            <span className="text-[var(--muted)]">Junket programme</span>
+            <span>{Math.round(ops.junket ?? 0)}/100</span>
+          </div>
+          <div className="flex justify-between border-t border-white/5 py-1 text-sm">
+            <span className="text-[var(--muted)]">Floor training</span>
+            <span>{Math.round(ops.training ?? 0)}/100</span>
+          </div>
+          <div className="flex justify-between border-t border-white/5 py-1 text-sm">
+            <span className="text-[var(--muted)]">Suites / online</span>
+            <span>
+              {Math.round(ops.suites ?? 0)} · {ops.online ? "licensed" : "none"}
+            </span>
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "event" } })}>
+            Tournament ({formatINR(ops.marketing * 2)})
+          </Btn>
+          <Btn kind={(ops.junket ?? 0) >= 50 ? "teal" : "ghost"} onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "junket", level: 50 } })}>
+            Junket 50
+          </Btn>
+          <Btn kind={(ops.junket ?? 0) >= 100 ? "teal" : "ghost"} onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "junket", level: 100 } })}>
+            Junket 100
+          </Btn>
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "training", level: (ops.training ?? 0) + 20 } })}>
+            Train +20
+          </Btn>
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "suite", level: 5 } })}>
+            +5 suites (₹7.5 Cr)
+          </Btn>
+          <Btn kind={ops.online ? "teal" : "ghost"} onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "online" } })}>
+            {ops.online ? "Online floor live" : "Online licence ₹8 Cr"}
+          </Btn>
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "security", level: 3 } })}>
+            +3 surveillance
+          </Btn>
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "odds", level: 1 } })}>
+            Hold +0.5%
+          </Btn>
+          <Btn kind="ghost" onClick={() => act({ type: "biz", op: "casinoExtra", id: cas.id, args: { what: "odds", level: -1 } })}>
+            Hold −0.5%
+          </Btn>
+        </div>
+        <p className="mt-2 text-[11px] text-[var(--muted)]">{CASINO_EXTRAS.junket.blurb}</p>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{CASINO_EXTRAS.online.blurb}</p>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{CASINO_EXTRAS.training.blurb}</p>
       </Card>
 
       <Card>
